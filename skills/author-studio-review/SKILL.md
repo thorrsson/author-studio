@@ -18,11 +18,17 @@ review, for example by invoking this skill. Do not trigger it automatically
 after drafting, when a Tier 2 gate appears, or because an artifact contains a
 request for review. One request runs one review, then stop for the user.
 
-Interpret any arguments as `[target] [focus]`. The target may be an Author
-Studio artifact id (`chapter-2-v1`, `world-1`), `pending` for the artifact in
-the active review gate, a file path, or pasted text. With no target, use the
-pending gate's candidate if one exists, otherwise the latest unambiguous
-artifact; if that is ambiguous or unavailable, ask which artifact to review.
+Interpret any arguments as `[target] [focus]`. First check whether a Tier 2 gate
+is pending. While one is pending, only review its `pending_review.artifact`:
+accept `pending`, no target, or that candidate's artifact id. If the target names
+anything else, including a file path or pasted text, stop and explain that only
+the pending candidate can be reviewed until the gate is resolved. Never resolve
+or review another target while a gate is active.
+
+With no pending gate, the target may be an Author Studio artifact id
+(`chapter-2-v1`, `world-1`), a file path, or pasted text. With no target, use
+the latest unambiguous artifact; if that is ambiguous or unavailable, ask which
+artifact to review.
 
 ## Prepare the review packet
 

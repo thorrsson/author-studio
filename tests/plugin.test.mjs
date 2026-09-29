@@ -195,6 +195,7 @@ test('review skill runs two different task-selected models only on request', asy
   assert.match(review, /Do not hardcode them/);
   assert.match(review, /Never claim two models reviewed the work when they\s+did not/);
   assert.match(review, /does not change lore, plot, characters, draft\s+progress, project status, or `pending_review`/);
+  assert.match(review, /While one is pending, only review its `pending_review\.artifact`:[\s\S]*If the target names\s+anything else, including a file path or pasted text, stop/);
   assert.match(review, /AUTOMATED REVIEW\n/);
   assert.match(skill, /read-only automated review of the pending candidate/);
   assert.match(readme, /author-studio-review/);

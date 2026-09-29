@@ -189,11 +189,13 @@ offers them. Name models in your request to override that choice.
 ```
 
 The target can be `pending` (the gated candidate), an artifact id, a file path,
-or pasted text. It defaults to the pending candidate, or else the latest
-unambiguous artifact. Reviews are advisory: they never edit, approve, or
-reject work, never change state, and can run while a gate is pending. Apply
-chosen fixes yourself, for example `MODIFY: apply R1 solution 1, R3 solution 2`,
-or run `edit` for an accepted artifact.
+or pasted text. While a gate is pending, only its candidate can be reviewed:
+use `pending`, omit the target, or name the candidate's artifact id. Other
+targets are not resolved until the gate is cleared. Without a pending gate, the
+target defaults to the latest unambiguous artifact. Reviews are advisory: they
+never edit, approve, or reject work or change state. Apply chosen fixes yourself,
+for example `MODIFY: apply R1 solution 1, R3 solution 2`, or run `edit` for an
+accepted artifact.
 
 Reviews never run automatically. Two-model review requires a host that can
 run plugin agents and choose a model per invocation. Otherwise, Author Studio
