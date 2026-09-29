@@ -1,7 +1,7 @@
 {
   "name": "author-studio",
-  "version": "1.1.0",
-  "description": "A human-directed writing studio for any fiction genre or blend, with five worker roles, continuity tracking, and review gates.",
+  "version": "1.2.0",
+  "description": "A human-directed writing studio for any fiction genre or blend, with five worker roles, continuity tracking, review gates, and optional two-model automated reviews.",
   "author": {
     "name": "Author Studio contributors"
   },

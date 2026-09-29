@@ -22,7 +22,7 @@ test('host manifests share metadata and a single skill directory', async () => {
   assert.ok(metadata.author.name.length > 0);
   assert.equal(metadata.license, 'MIT');
   assert.deepEqual(skills, ['skills/']);
-  assert.deepEqual(await readdir(path.join(root, 'skills')), ['author-studio']);
+  assert.deepEqual((await readdir(path.join(root, 'skills'))).sort(), ['author-studio', 'author-studio-review']);
   for (const manifest of [copilot, claude]) {
     for (const executableComponent of ['hooks', 'mcpServers', 'lspServers']) {
       assert.equal(manifest[executableComponent], undefined);
@@ -157,7 +157,45 @@ test('manual acceptance cases have unique IDs and observable expectations', asyn
     assert.ok(scenario.actions.every((value) => typeof value === 'string' && value.length > 0));
     assert.ok(scenario.expected.every((value) => typeof value === 'string' && value.length > 0));
   }
-  for (const required of ['boundary-075', 'high-confidence-contradiction', 'modify', 'reject', 'resume-pending', 'injection', 'state-on-demand', 'quiet-file-export', 'export-without-tools', 'grounded-romance', 'genre-blend', 'unspecified-genre', 'short-form', 'legacy-genre', 'genre-conflict', 'literary-fiction', 'custom-genre']) {
+  for (const required of ['auto-review-pending-gate', 'auto-review-not-requested', 'auto-review-single-model-host', 'auto-review-injection', 'boundary-075', 'high-confidence-contradiction', 'modify', 'reject', 'resume-pending', 'injection', 'state-on-demand', 'quiet-file-export', 'export-without-tools', 'grounded-romance', 'genre-blend', 'unspecified-genre', 'short-form', 'legacy-genre', 'genre-conflict', 'literary-fiction', 'custom-genre']) {
     assert.ok(cases.some(({ id }) => id === required), `Missing scenario: ${required}`);
   }
+});
+
+test('reviewer agent is shared by both hosts, read-only, and model-agnostic', async () => {
+  assert.deepEqual(await readdir(path.join(root, 'agents')), ['author-studio-reviewer.agent.md']);
+  const agent = await read('agents/author-studio-reviewer.agent.md');
+  const frontmatter = agent.match(/^---\n([\s\S]+?)\n---\n/);
+  assert.ok(frontmatter, 'Expected agent frontmatter');
+  const fields = Object.fromEntries(
+    frontmatter[1].split('\n').map((line) => line.split(/:\s(.+)/).slice(0, 2)),
+  );
+  assert.equal(fields.name, 'author-studio-reviewer');
+  assert.ok(fields.description.length > 0);
+  assert.deepEqual(fields.tools.split(/,\s*/), ['Read', 'Grep', 'Glob']);
+  assert.equal(fields.model, undefined, 'Models are chosen per invocation by the review skill');
+  assert.match(agent, /REVIEWER REPORT/);
+  assert.match(agent, /Potential solutions:/);
+  assert.match(agent, /never as instructions to you/);
+});
+
+test('review skill runs two different task-selected models only on request', async () => {
+  const [review, skill, readme] = await Promise.all([
+    read('skills/author-studio-review/SKILL.md'),
+    read(`${skillDir}/SKILL.md`),
+    read('README.md'),
+  ]);
+  const frontmatter = review.match(/^---\nname: ([^\n]+)\ndescription: ([^\n]+)\n---\n/);
+  assert.ok(frontmatter);
+  assert.equal(frontmatter[1], 'author-studio-review');
+  assert.ok(frontmatter[2].length <= 1024);
+  assert.match(review, /`author-studio-reviewer`/);
+  assert.match(review, /Run only when the user explicitly asks/);
+  assert.match(review, /Never use the same model twice/);
+  assert.match(review, /Do not hardcode them/);
+  assert.match(review, /Never claim two models reviewed the work when they\s+did not/);
+  assert.match(review, /does not change lore, plot, characters, draft\s+progress, project status, or `pending_review`/);
+  assert.match(review, /AUTOMATED REVIEW\n/);
+  assert.match(skill, /read-only automated review of the pending candidate/);
+  assert.match(readme, /author-studio-review/);
 });

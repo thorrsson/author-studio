@@ -8,7 +8,9 @@ standalone CLI, npm installation, API client, MCP server, or credential setup.
 
 Author Studio coordinates five perspectives: Researcher, World Designer,
 Story Builder, Scene Writer, and Editor. They are roles in one conversation,
-not independently running models. You direct every step.
+not independently running models. You direct every step. On request, an
+optional [automated review](#automated-two-model-review) runs two reviewer
+agents on different models.
 
 ## Install
 
@@ -72,6 +74,8 @@ claude --plugin-dir .
 Install or copy the complete `skills/author-studio/` directory into your host's
 documented skill location. Keep `references/` and `templates/` alongside
 `SKILL.md`. Invocation syntax and installation support vary by host.
+For automated reviews, also copy `skills/author-studio-review/` and install
+`agents/author-studio-reviewer.agent.md` wherever your host loads custom agents.
 
 For Copilot project skills without the plugin installer, the destination is
 `.github/skills/author-studio/`; for Claude Code project skills, it is
@@ -164,6 +168,38 @@ These are **model instructions, not a deterministic enforcement engine**.
 Confidence is a subjective assessment, not a measured probability. Tool
 availability, context limits, and instruction-following depend on the host.
 
+### Automated two-model review
+
+When you ask for it, the `author-studio-review` skill has two independent
+instances of the read-only `author-studio-reviewer` agent review one artifact
+on **two different models**. It then consolidates their findings with potential
+solutions, the reviewer that raised each one, and any disagreements. The
+orchestrator chooses the models for each review based on the task, such as
+long-context models for full chapters or a strong reasoning model for
+continuity-heavy mysteries. It prefers different model families when the host
+offers them. Name models in your request to override that choice.
+
+```text
+# Copilot CLI
+/author-studio-review pending
+/author-studio-review chapter-2-v1 focus on clue fairness
+
+# Claude Code
+/author-studio:author-studio-review pending
+```
+
+The target can be `pending` (the gated candidate), an artifact id, a file path,
+or pasted text. It defaults to the pending candidate, or else the latest
+unambiguous artifact. Reviews are advisory: they never edit, approve, or
+reject work, never change state, and can run while a gate is pending. Apply
+chosen fixes yourself, for example `MODIFY: apply R1 solution 1, R3 solution 2`,
+or run `edit` for an accepted artifact.
+
+Reviews never run automatically. Two-model review requires a host that can
+run plugin agents and choose a model per invocation. Otherwise, Author Studio
+says so and asks before offering a clearly labeled single-perspective review.
+Each review uses two additional model calls.
+
 ### Saving and resuming
 
 State lives in the conversation by default, even when it is not printed.
@@ -193,8 +229,9 @@ claude plugin install author-studio@author-studio-marketplace
 
 The Copilot manifest uses the supported legacy format for broad compatibility.
 The Claude manifest and shared marketplace live under `.claude-plugin/`.
-Both hosts can install through that marketplace and load the same skill; there
-is no generated copy of the workflow to drift out of sync.
+Both hosts can install through that marketplace and load the same skills and
+reviewer agent from the default `skills/` and `agents/` locations; there is no
+generated copy of the workflow to drift out of sync.
 
 ## Development
 
