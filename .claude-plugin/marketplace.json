@@ -1,0 +1,14 @@
+{
+  "name": "author-studio-marketplace",
+  "description": "The Author Studio fiction-writing plugin for human-directed worldbuilding, drafting, and editing.",
+  "owner": {
+    "name": "Author Studio contributors"
+  },
+  "plugins": [
+    {
+      "name": "author-studio",
+      "source": "./",
+      "description": "A human-directed writing studio for any fiction genre or blend, with five worker roles, continuity tracking, and review gates."
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "project": {
+    "title": "",
+    "concept": "",
+    "genre": "",
+    "status": "idle"
+  },
+  "lore": {
+    "magic_system": "",
+    "tech_level": "",
+    "key_factions": [],
+    "timeline_log": []
+  },
+  "plot": {
+    "act_beats": [],
+    "loose_threads": [],
+    "twist_map": []
+  },
+  "characters": [],
+  "draft_progress": {
+    "completed_chapters": [],
+    "current_chapter": "",
+    "tier2_pending": false
+  },
+  "orchestrator_log": [],
+  "pending_review": null
+}

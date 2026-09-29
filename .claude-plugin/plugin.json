@@ -1,0 +1,11 @@
+{
+  "name": "author-studio",
+  "version": "1.1.0",
+  "description": "A human-directed writing studio for any fiction genre or blend, with five worker roles, continuity tracking, and review gates.",
+  "author": {
+    "name": "Author Studio contributors"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/thorrsson/author-studio",
+  "keywords": ["fiction", "writing", "storytelling", "worldbuilding", "cross-genre"]
+}
