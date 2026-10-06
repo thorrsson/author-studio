@@ -1,0 +1,33 @@
+{
+  "name": "author-studio-desktop",
+  "productName": "Author Studio",
+  "version": "1.0.0",
+  "description": "Desktop app for Author Studio, a human-directed fiction-writing studio that works with Claude, OpenAI, local AI servers, and Apple Intelligence.",
+  "author": "Author Studio contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/thorrsson/author-studio",
+  "repository": "https://github.com/thorrsson/author-studio",
+  "private": true,
+  "type": "module",
+  "main": "src/main/main.js",
+  "desktopName": "author-studio.desktop",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:e2e": "node test/e2e/smoke.mjs",
+    "build:apple-helper": "node scripts/build-apple-helper.mjs",
+    "icons": "electron scripts/render-icon.mjs",
+    "dist": "npm run build:apple-helper && electron-builder --publish never",
+    "dist:mac": "npm run build:apple-helper && electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.63.0"
+  }
+}
