@@ -224,16 +224,24 @@ export AUTHOR_STUDIO_APPLE_ID=you@example.com AUTHOR_STUDIO_APPLE_PASSWORD=abcd-
 
 The [Desktop app workflow](../.github/workflows/desktop.yml) runs the tests on
 macOS, Windows, and Linux for every change, and builds unsigned test copies
-from `main`. Pushing a tag such as `desktop-v1.0.0` (matching `version` in
-`package.json`) runs the
-[Desktop release workflow](../.github/workflows/desktop-release.yml). It builds,
-signs, and notarizes the Mac image, tests the signed app, builds the Windows
-and Linux installers, and attaches them all to a draft GitHub release for you
-to check and publish.
+from `main`. The
+[Desktop release workflow](../.github/workflows/desktop-release.yml) publishes
+a release. To make one, raise `version` in `package.json` on `main`, then open
+**Actions → Desktop release → Run workflow** and run it on `main`. It tags that
+commit `desktop-v<version>` and starts a second run on the tag. That run
+builds, signs, and notarizes the Mac image, tests the signed app, builds the
+Windows and Linux installers, and publishes them all as a GitHub release. A
+version with a suffix, such as `1.1.0-beta.1`, is published as a pre-release.
+
+Pushing the tag yourself does the same thing:
 
 ```sh
 git tag desktop-v1.0.0 && git push origin desktop-v1.0.0
 ```
+
+A version that's already released is refused. If a release run fails, re-run
+it from the tag's run, or run the workflow on `main` again, which reuses the
+tag while it still points at the same commit.
 
 The Mac build needs these secrets, which belong to a **`release` environment**
 rather than to the repository:
@@ -284,10 +292,10 @@ limits it the same way, and it leaves settings you chose alone. Also add
 yourself as a required reviewer, under **Settings → Environments → release**.
 Restricting the workflow to tags isn't a control on its own: anyone who can
 push such a tag also chooses the scripts it points at, and the job runs them
-with the signing and notarization keys in scope. Because of the tag limit, a
-release run started by hand from the Actions tab must use a `desktop-v*` tag,
-not a branch. The certificate is imported into a throwaway keychain that is
-deleted at the end of the job.
+with the signing and notarization keys in scope. That's why the workflow
+starts a separate run on the tag, rather than signing from `main`. The
+certificate is imported into a throwaway keychain that is deleted at the end
+of the job.
 
 Windows signing is optional: set `WINDOWS_CERTIFICATE` (a base64 `.pfx`) and
 `WINDOWS_CERTIFICATE_PASSWORD` as repository secrets to sign the installer.

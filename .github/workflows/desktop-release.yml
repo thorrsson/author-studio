@@ -1,8 +1,13 @@
 name: Desktop release
 
-# Builds a release from a desktop-v<version> tag: a signed and notarized disk
-# image for macOS, plus the Windows and Linux installers, attached to a draft
-# GitHub release for a person to check and publish.
+# Publishes a desktop release: a signed and notarized disk image for macOS,
+# plus the Windows and Linux installers, on a GitHub release.
+#
+# Run it from the Actions tab on the default branch, and it tags that commit
+# desktop-v<version>, from app/package.json, then starts itself again on the
+# tag, which does the build. Pushing a desktop-v* tag does the same. Either
+# way the signing job runs from a tag, which is what the release environment
+# allows.
 on:
   push:
     tags: ['desktop-v*']
@@ -19,24 +24,78 @@ jobs:
   version:
     name: Check version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tagged: ${{ steps.version.outputs.tagged }}
     defaults:
       run:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag matches the app version
+        id: version
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF_NAME#desktop-v}" != "$version" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ "${GITHUB_REF_NAME#desktop-v}" != "$version" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
+              exit 1
+            fi
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+            echo "Building Author Studio $version"
+          else
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # A run started by hand on a branch only tags the commit and starts the real
+  # release on that tag. A tag created with GITHUB_TOKEN doesn't trigger push
+  # workflows, but a workflow_dispatch from it does.
+  tag:
+    name: Tag desktop-v${{ needs.version.outputs.version }}
+    needs: version
+    if: needs.version.outputs.tagged == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Tag the commit and start the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: desktop-v${{ needs.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::Releases are made from $DEFAULT_BRANCH, not $GITHUB_REF_NAME. Run the workflow on $DEFAULT_BRANCH, or on a desktop-v* tag."
             exit 1
           fi
-          echo "Building Author Studio $version"
+          if existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft == false' 2>/dev/null | grep -qx true; then
+              echo "::error::$TAG is already released. Raise version in app/package.json to release again."
+              exit 1
+            fi
+            if [[ "$existing" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already points at $existing, not $GITHUB_SHA. Raise version in app/package.json, or delete the tag if it was a mistake."
+              exit 1
+            fi
+            echo "$TAG already points at this commit; starting its release again."
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+            echo "Tagged $GITHUB_SHA as $TAG."
+          fi
+          workflow="${GITHUB_WORKFLOW_REF%@*}"
+          gh workflow run "${workflow##*/}" --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "### Releasing $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "The build runs in [a new run on the tag]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/${workflow##*/}?query=branch%3A$TAG)." >> "$GITHUB_STEP_SUMMARY"
 
   macos:
     name: macOS (signed and notarized)
     needs: version
+    if: needs.version.outputs.tagged == 'true'
     runs-on: macos-26
     # The Developer ID private key and the notarization key only exist inside
     # this environment, so the job cannot start until a reviewer approves the
@@ -144,6 +203,7 @@ jobs:
   build:
     name: ${{ matrix.name }}
     needs: version
+    if: needs.version.outputs.tagged == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -194,9 +254,9 @@ jobs:
             app/dist/*.deb
 
   release:
-    name: Draft release
-    needs: [macos, build]
-    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    name: Publish release
+    needs: [version, macos, build]
+    if: needs.version.outputs.tagged == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -205,15 +265,29 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - name: Attach the installers to a draft release
+      # Uploaded to a draft first and published once every file is there, so
+      # nobody downloads from a half-uploaded release. A re-run replaces the
+      # files of the draft or release already made.
+      - name: Publish the installers
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Author Studio desktop ${GITHUB_REF_NAME#desktop-v}" \
-            --generate-notes \
-            --verify-tag \
-          || gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          prerelease=()
+          [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Author Studio desktop $VERSION" \
+              --generate-notes \
+              --verify-tag \
+              ${prerelease[@]+"${prerelease[@]}"}
+          fi
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          url="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          echo "Published $url"
+          echo "### Published [Author Studio desktop $VERSION]($url)" >> "$GITHUB_STEP_SUMMARY"

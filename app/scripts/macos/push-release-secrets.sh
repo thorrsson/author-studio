@@ -248,4 +248,4 @@ set_secret NOTARY_API_ISSUER_ID "${API_ISSUER_ID}"
 
 gh secret list --env "${ENVIRONMENT}" --repo "${REPO}"
 warn_unprotected
-log "Done. Push a ${TAG_PATTERN} tag to release."
+log "Done. To release, run Desktop release from the Actions tab on the default branch, or push a ${TAG_PATTERN} tag."
