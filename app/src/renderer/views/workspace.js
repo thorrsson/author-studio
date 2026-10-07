@@ -41,6 +41,8 @@ const LOG_STEP_LABELS = {
   MODIFY: 'Revised for review',
 };
 
+const MAX_CHAPTER = 9999;
+
 const RUNNABLE_WORKERS = new Set(['Researcher', 'World Designer', 'Story Builder', 'Scene Writer', 'Editor']);
 
 // ---------- project helpers ----------
@@ -171,11 +173,52 @@ async function perform(project, op, args, { button } = {}) {
 }
 
 async function stopRun(projectId) {
+  const yolo = state.yolo.get(projectId);
+  if (yolo) yolo.stopAfter = true;
   try {
     await call('engine:cancel', { projectId });
   } catch (error) {
     showError(error);
   }
+}
+
+// YOLO mode: writes chapters first..last in a row. Stops early when a chapter
+// needs the author's review, a step fails or is stopped, or the author asks it
+// to stop after the current chapter.
+async function runYolo(project, { first, last, notes }, { button } = {}) {
+  const id = project.id;
+  const yolo = { first, last, chapter: first, written: 0, stopAfter: false };
+  state.yolo.set(id, yolo);
+  let current = project;
+  let outcome = 'done';
+  try {
+    for (let chapter = first; chapter <= last; chapter += 1) {
+      if (yolo.stopAfter) {
+        outcome = 'stopped';
+        break;
+      }
+      yolo.chapter = chapter;
+      const result = await perform(current, 'step', { action: 'draft', chapter, notes: chapter === first ? notes : '' }, { button });
+      if (!result) {
+        outcome = 'failed';
+        break;
+      }
+      current = result.project;
+      if (result.outcome !== 'accepted') {
+        outcome = 'gated';
+        break;
+      }
+      yolo.written += 1;
+    }
+  } finally {
+    state.yolo.delete(id);
+    actions.render();
+  }
+  const written = plural(yolo.written, 'chapter');
+  if (outcome === 'done') toast(`YOLO mode finished: wrote ${written}.`, { kind: 'success' });
+  else if (outcome === 'stopped' || (outcome === 'failed' && yolo.written)) toast(`YOLO mode stopped after ${written}.`);
+  else if (outcome === 'gated' && yolo.written) toast(`YOLO mode wrote ${written}, then paused for your review.`, { kind: 'info' });
+  return { outcome, written: yolo.written, project: current };
 }
 
 // ---------- shared pieces ----------
@@ -424,15 +467,26 @@ function runPanel(project) {
   const run = state.runs.get(project.id);
   if (!run) return null;
   const reviewers = Object.values(run.reviewers ?? {});
+  const yolo = state.yolo.get(project.id);
   return h('section', { class: 'card run-card', 'aria-busy': 'true' },
     h('div', { class: 'run-head' },
       h('span', { class: 'spinner', 'aria-hidden': 'true' }),
       h('div', { class: 'run-title' }, h('strong', null, `${run.label}…`), h('span', { class: 'muted small run-elapsed', dataset: { started: String(run.startedAt) } }, formatElapsed(Date.now() - run.startedAt))),
+      yolo ? h('button', {
+        class: 'btn small',
+        type: 'button',
+        disabled: yolo.stopAfter,
+        onclick: () => {
+          yolo.stopAfter = true;
+          actions.render();
+        },
+      }, yolo.stopAfter ? 'Stopping after this chapter' : 'Stop after this chapter') : null,
       h('button', { class: 'btn small danger', type: 'button', onclick: () => stopRun(project.id) }, 'Stop')),
+    yolo ? h('p', { class: 'muted small yolo-progress' }, `YOLO mode: chapter ${yolo.chapter} of ${yolo.first}–${yolo.last}. ${plural(yolo.written, 'chapter')} accepted so far. It pauses if a chapter needs your review.`) : null,
     reviewers.length ? h('ul', { class: 'reviewer-status' }, reviewers.map((item) => h('li', { class: `state-${item.state}` },
       `${item.reviewer === 'consolidation' ? 'Combining reports' : `Reviewer ${item.reviewer}`} (${item.model}): ${item.state === 'running' ? 'working' : item.state === 'done' ? 'done' : `failed. ${item.error ?? ''}`}`))) : null,
     h('div', { class: 'stream', id: `stream-${project.id}`, 'aria-live': 'off' }, run.text || 'Waiting for the model to start writing…'),
-    h('p', { class: 'hint' }, 'Stopping discards this step; your story is not changed.'));
+    h('p', { class: 'hint' }, yolo ? 'Stopping discards the chapter in progress; chapters already accepted are kept.' : 'Stopping discards this step; your story is not changed.'));
 }
 
 function reviewCard(project) {
@@ -564,11 +618,21 @@ function composer(project) {
   const target = targets.some((item) => item.id === targetDraft) ? targetDraft : targets.at(-1)?.id ?? '';
   const notesKey = `step:${id}:notes`;
   const needsKey = connection && state.settings.connectionTypes[connection.type].needsKey && !connection.hasKey;
+  const yoloKey = `step:${id}:yolo`;
+  const yoloLastKey = `step:${id}:yoloLast`;
+  const yoloOn = action === 'draft' && draft(yoloKey, false) === true;
+  const yoloLastDefault = () => String((Number(draft(`step:${id}:chapter`, chapter)) || 1) + 4);
+  const startLabel = () => {
+    const current = draft(`step:${id}:chapter`, chapter);
+    if (action === 'draft' && draft(yoloKey, false) === true) return `Write chapters ${current}–${draft(yoloLastKey, yoloLastDefault())}`;
+    if (action === 'draft') return `Write chapter ${current}`;
+    return action === 'edit' ? 'Revise' : `Start ${STEPS[action].title.toLowerCase()}`;
+  };
 
   const start = h('button', {
     class: 'btn primary',
     type: 'button',
-    disabled: running || !connection || needsKey,
+    disabled: running || state.yolo.has(id) || !connection || needsKey,
     onclick: async (event) => {
       const args = { action, notes: draft(notesKey) };
       if (action === 'draft') {
@@ -579,6 +643,21 @@ function composer(project) {
         }
       }
       if (action === 'edit') args.target = target;
+      if (yoloOn) {
+        const last = Number(draft(yoloLastKey, yoloLastDefault()));
+        if (!Number.isInteger(last) || last < args.chapter || last > MAX_CHAPTER) {
+          toast(`Choose a last chapter from ${args.chapter} to ${MAX_CHAPTER}.`);
+          return;
+        }
+        const result = await runYolo(project, { first: args.chapter, last, notes: args.notes }, { button: event.currentTarget });
+        if (result.written) {
+          setDraft(notesKey);
+          setDraft(`step:${id}:chapter`);
+          setDraft(yoloLastKey);
+          actions.render();
+        }
+        return;
+      }
       const result = await perform(project, 'step', args, { button: event.currentTarget });
       if (result) {
         setDraft(notesKey);
@@ -587,7 +666,7 @@ function composer(project) {
         actions.render();
       }
     },
-  }, action === 'draft' ? `Write chapter ${draft(`step:${id}:chapter`, chapter)}` : action === 'edit' ? 'Revise' : `Start ${STEPS[action].title.toLowerCase()}`);
+  }, startLabel());
 
   const notes = h('textarea', {
     id: 'step-notes',
@@ -625,15 +704,34 @@ function composer(project) {
       value: chapter,
       oninput: (event) => {
         setDraft(`step:${id}:chapter`, event.target.value);
-        start.textContent = `Write chapter ${event.target.value}`;
+        start.textContent = startLabel();
       },
     })) : null,
+    action === 'draft' ? h('div', { class: 'yolo-options' },
+      h('label', { class: 'check' },
+        h('input', { type: 'checkbox', id: 'step-yolo', checked: yoloOn, onchange: (event) => {
+          setDraft(yoloKey, event.target.checked || undefined);
+          actions.render();
+        } }),
+        h('span', null, h('strong', null, 'YOLO mode'), h('span', { class: 'block muted small' }, 'Keep writing chapters one after another without clicking Write each time. Chapters the writer is confident about are accepted automatically; it pauses as soon as one needs your review.'))),
+      yoloOn ? h('div', { class: 'field inline-field' }, h('label', { for: 'step-yolo-last' }, 'Through chapter'), h('input', {
+        id: 'step-yolo-last',
+        dataset: { key: 'step-yolo-last' },
+        type: 'number',
+        min: '1',
+        max: String(MAX_CHAPTER),
+        value: draft(yoloLastKey, yoloLastDefault()),
+        oninput: (event) => {
+          setDraft(yoloLastKey, event.target.value);
+          start.textContent = startLabel();
+        },
+      })) : null) : null,
     action === 'edit' ? h('div', { class: 'field' }, h('label', { for: 'step-target' }, 'Revise'), h('select', {
       id: 'step-target',
       value: target,
       onchange: (event) => setDraft(`step:${id}:target`, event.target.value),
     }, targets.map((item) => h('option', { value: item.id }, artifactLabel(item))))) : null,
-    h('div', { class: 'field' }, h('label', { for: 'step-notes' }, action === 'edit' ? 'Your notes' : 'Notes for this step'), notes),
+    h('div', { class: 'field' }, h('label', { for: 'step-notes' }, action === 'edit' ? 'Your notes' : yoloOn ? 'Notes for the first chapter' : 'Notes for this step'), notes),
     h('div', { class: 'composer-foot' },
       connection
         ? h('span', { class: 'muted small' }, `Using ${connection.label}. `, h('button', { class: 'link-button', type: 'button', onclick: () => actions.navigate({ name: 'settings' }) }, 'Change'),

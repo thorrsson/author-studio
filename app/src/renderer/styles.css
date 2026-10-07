@@ -741,3 +741,5 @@ details.advanced:not([open]) > summary { margin-bottom: 0; }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
   .spinner, .btn.is-busy::after { animation-duration: 2.4s !important; }
 }
+.yolo-options .check { margin-bottom: 8px; }
+.yolo-progress { margin: -4px 0 12px; }

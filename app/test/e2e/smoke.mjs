@@ -58,11 +58,26 @@ const CHAPTER = reply(
   },
 );
 
+function yoloChapter(number, confidence) {
+  return reply(`## Chapter ${number}\n\nMorag walked the shore again on day ${number}, counting what the tide had left.`, {
+    confidence,
+    rationale: confidence > 0.75 ? 'Steady and consistent with the setting.' : 'The ending of this chapter feels rushed.',
+    flags: confidence > 0.75 ? [] : ['Rushed ending'],
+    contradictions: [],
+    complete: true,
+    summary: `Chapter ${number}`,
+    proposed_changes: {},
+  });
+}
+
 // Replies in the order the walkthrough asks for them.
 const SCRIPT = [
   { text: BRIEF, size: 8, delay: 25 },
   { text: WORLD },
   { text: CHAPTER },
+  { text: yoloChapter(2, 0.9) },
+  { text: yoloChapter(3, 0.9) },
+  { text: yoloChapter(4, 0.5) },
   { text: 'A plan that takes a long time. '.repeat(400), size: 12, delay: 120 },
 ];
 
@@ -174,11 +189,28 @@ async function main() {
     await page.waitForSelector('.toast:has-text("You approved")');
     await page.waitForSelector('.composer');
 
+    step('write several chapters in YOLO mode until one needs review');
+    await page.click('.step-option:has-text("Write")');
+    assert.equal(await page.inputValue('#step-chapter'), '2');
+    await page.check('#step-yolo');
+    await page.fill('#step-yolo-last', '5');
+    assert.equal((await page.textContent('.composer .btn.primary')).trim(), 'Write chapters 2–5');
+    await shot('06a-yolo-composer');
+    await page.click('.composer .btn.primary');
+    await page.waitForSelector('.run-card .yolo-progress');
+    await page.waitForSelector('.review-card:has-text("Chapter 4")');
+    await page.waitForSelector('.toast:has-text("YOLO mode wrote 2 chapters, then paused for your review")');
+    assert.match(await page.textContent('.review-card'), /Rushed ending/);
+    await shot('06c-yolo-review');
+    await page.click('.review-actions .btn.primary');
+    await page.waitForSelector('.composer');
+    assert.equal(await page.inputValue('#step-chapter'), '5');
+
     step('stop a slow step');
     await page.click('.step-option:has-text("Story plan")');
     await page.click('.composer .btn.primary');
     await page.waitForSelector('.run-card .stream:has-text("A plan that takes")');
-    await shot('06-running');
+    await shot('06d-running');
     await page.click('.run-card .btn.danger');
     await page.waitForSelector('.composer');
     assert.equal(await page.locator('.run-card').count(), 0);
