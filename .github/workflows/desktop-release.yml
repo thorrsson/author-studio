@@ -4,14 +4,19 @@ name: Desktop release
 # plus the Windows and Linux installers, on a GitHub release.
 #
 # Run it from the Actions tab on the default branch, and it tags that commit
-# desktop-v<version>, from app/package.json, then starts itself again on the
-# tag, which does the build. Pushing a desktop-v* tag does the same. Either
+# desktop-v<version>, optionally committing a supplied version first, then
+# starts itself on the tag, which does the build. Pushing a desktop-v* tag does the same. Either
 # way the signing job runs from a tag, which is what the release environment
 # allows.
 on:
   push:
     tags: ['desktop-v*']
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Optional version, e.g. 1.0.2 or 1.1.0-beta.1, without build metadata (blank uses app/package.json)'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -37,9 +42,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            node --input-type=module -e '
+              const numeric = "(?:0|[1-9][0-9]*)";
+              const identifier = `(?:${numeric}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)`;
+              const semver = new RegExp(`^${numeric}\\.${numeric}\\.${numeric}(?:-${identifier}(?:\\.${identifier})*)?$`);
+              if (!semver.test(process.env.REQUESTED_VERSION)) {
+                console.error("::error::The requested version must be a valid SemVer version without build metadata, such as 1.0.2 or 1.1.0-beta.1.");
+                process.exit(1);
+              }
+            '
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              if [[ "$REQUESTED_VERSION" != "$version" ]]; then
+                echo "::error::A tagged release cannot change the app version. Run the workflow on $DEFAULT_BRANCH to commit a new version."
+                exit 1
+              fi
+            else
+              version="$REQUESTED_VERSION"
+            fi
+          fi
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             if [[ "${GITHUB_REF_NAME#desktop-v}" != "$version" ]]; then
               echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
@@ -71,11 +96,16 @@ jobs:
       contents: write
       actions: write
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - name: Tag the commit and start the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: desktop-v${{ needs.version.outputs.version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
@@ -84,7 +114,7 @@ jobs:
           fi
           if existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
             if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft == false' 2>/dev/null | grep -qx true; then
-              echo "::error::$TAG is already released. Raise version in app/package.json to release again."
+              echo "::error::$TAG is already released. Enter a new version or raise version in app/package.json to release again."
               exit 1
             fi
             if [[ "$existing" != "$GITHUB_SHA" ]]; then
@@ -93,9 +123,34 @@ jobs:
             fi
             echo "$TAG already points at this commit; starting its release again."
           else
+            release_sha="$GITHUB_SHA"
+            if [[ -n "$REQUESTED_VERSION" ]]; then
+              git fetch origin "$DEFAULT_BRANCH"
+              if [[ "$(git rev-parse FETCH_HEAD)" != "$GITHUB_SHA" ]]; then
+                echo "::error::$DEFAULT_BRANCH has advanced since this run started. Run the workflow again on the latest commit."
+                exit 1
+              fi
+              cd app
+              if [[ "$(node -p "require('./package.json').version")" != "$REQUESTED_VERSION" ]]; then
+                npm version "$REQUESTED_VERSION" --no-git-tag-version --ignore-scripts
+              fi
+              cd ..
+              git add app/package.json app/package-lock.json
+              if ! git diff --cached --quiet; then
+                git config user.name 'github-actions[bot]'
+                git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+                git commit -m "Bump desktop app version to $REQUESTED_VERSION" \
+                  -m "Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>"
+                if ! git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"; then
+                  echo "::error::Could not commit the version to $DEFAULT_BRANCH. Check branch protection and workflow write permissions, then retry from the latest commit."
+                  exit 1
+                fi
+                release_sha="$(git rev-parse HEAD)"
+              fi
+            fi
             gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
-            echo "Tagged $GITHUB_SHA as $TAG."
+              -f ref="refs/tags/$TAG" -f sha="$release_sha" > /dev/null
+            echo "Tagged $release_sha as $TAG."
           fi
           workflow="${GITHUB_WORKFLOW_REF%@*}"
           gh workflow run "${workflow##*/}" --repo "$GITHUB_REPOSITORY" --ref "$TAG"

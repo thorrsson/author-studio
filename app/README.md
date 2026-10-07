@@ -246,9 +246,17 @@ The [Desktop app workflow](../.github/workflows/desktop.yml) runs the tests on
 macOS, Windows, and Linux for every change, and builds unsigned test copies
 from `main`. The
 [Desktop release workflow](../.github/workflows/desktop-release.yml) publishes
-a release. To make one, raise `version` in `package.json` on `main`, then open
-**Actions → Desktop release → Run workflow** and run it on `main`. It tags that
-commit `desktop-v<version>` and starts a second run on the tag. That run
+a release. Open **Actions → Desktop release → Run workflow** on `main`.
+Optionally enter a SemVer **version**, such as `1.0.2` or `1.1.0-beta.1`: the
+workflow updates `app/package.json` and its lockfile, commits and pushes the
+change to `main`, then tags that commit `desktop-v<version>`. Leave the field
+blank to release the version already in `app/package.json` without a commit.
+Branch protection must allow the workflow to push; otherwise, update the
+version through a pull request and leave the field blank. If `main` advances
+during preparation, restart the workflow on the latest commit.
+Versions with `+build` metadata are not accepted because npm strips that
+metadata when updating the package version.
+The workflow starts a second run on the tag. That run
 builds, signs, and notarizes the Mac image, tests the signed app, builds the
 Windows and Linux installers, and publishes them all as a GitHub release,
 alongside `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, and Windows

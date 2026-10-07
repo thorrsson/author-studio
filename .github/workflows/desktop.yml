@@ -10,12 +10,14 @@ on:
       - 'skills/**'
       - 'agents/**'
       - '.github/workflows/desktop.yml'
+      - '.github/workflows/desktop-release.yml'
   pull_request:
     paths:
       - 'app/**'
       - 'skills/**'
       - 'agents/**'
       - '.github/workflows/desktop.yml'
+      - '.github/workflows/desktop-release.yml'
   workflow_dispatch:
 
 permissions:
