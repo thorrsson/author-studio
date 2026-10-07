@@ -18,7 +18,7 @@ function scriptAfter(name) {
   return body.join('\n');
 }
 const check = scriptAfter('Check the tag matches the app version');
-const tag = scriptAfter('Tag the commit and start the release');
+const tag = scriptAfter('Prepare the version PR or tag and start the release');
 
 function run(command, args, cwd, env = {}) {
   return spawnSync(command, args, { cwd, env: { ...process.env, ...env }, encoding: 'utf8' });
@@ -63,6 +63,12 @@ elif [[ "$1" == release ]]; then
   exit 1
 elif [[ "$1" == workflow ]]; then
   printf '%s\\n' "$@" > "$DISPATCH_RECORD"
+elif [[ "$1 $2" == "pr list" ]]; then
+  printf '%s' "\${EXISTING_PR:-}"
+elif [[ "$1 $2" == "pr create" ]]; then
+  if [[ "\${REJECT_PR:-}" == 1 ]]; then exit 1; fi
+  printf '%s\\n' "$@" > "$PR_RECORD"
+  echo 'https://github.com/example/repo/pull/1'
 else
   exit 1
 fi
@@ -71,10 +77,12 @@ fi
     PATH: `${bin}${path.delimiter}${process.env.PATH}`,
     DEFAULT_BRANCH: 'main', GITHUB_REF: 'refs/heads/main', GITHUB_REF_NAME: 'main',
     GITHUB_SHA: sha, GITHUB_REPOSITORY: 'example/repo', REQUESTED_VERSION: '',
+    EVENT_NAME: 'workflow_dispatch', PR_BRANCH: '', VERSION: '1.0.1',
     GITHUB_SERVER_URL: 'https://github.com',
     GITHUB_WORKFLOW_REF: 'example/repo/.github/workflows/desktop-release.yml@refs/heads/main',
     GITHUB_OUTPUT: path.join(root, 'output'), GITHUB_STEP_SUMMARY: path.join(root, 'summary'),
     TAG_RECORD: path.join(root, 'tag'), DISPATCH_RECORD: path.join(root, 'dispatch'),
+    PR_RECORD: path.join(root, 'pr'),
   };
   return { cwd, root, remote, git, sha, env };
 }
@@ -97,21 +105,33 @@ test('release input validates SemVer and preserves tagged version checks', t => 
 });
 
 for (const version of ['', '1.0.1', '1.0.2', '2.0.0-beta.1']) {
-  test(`release preparation commits and tags the correct SHA for ${version || 'blank input'}`, t => {
+  test(`release preparation respects protected main for ${version || 'blank input'}`, t => {
     const { cwd, git, remote, sha, env } = fixture(t);
+    writeFileSync(path.join(remote, 'hooks/pre-receive'), `#!/bin/bash
+while read -r old new ref; do
+  if [[ "$ref" == refs/heads/main ]]; then exit 1; fi
+done
+`, { mode: 0o755 });
     const target = version || '1.0.1';
-    const result = run('bash', ['-c', tag], cwd, { ...env, REQUESTED_VERSION: version, TAG: `desktop-v${target}` });
+    const result = run('bash', ['-c', tag], cwd, { ...env, REQUESTED_VERSION: version, VERSION: target, TAG: `desktop-v${target}` });
     assert.equal(result.status, 0, result.stderr);
     const head = git('rev-parse', 'HEAD');
     assert.equal(head === sha, target === '1.0.1');
-    assert.equal(git('--git-dir', remote, 'rev-parse', 'main'), head);
+    assert.equal(git('--git-dir', remote, 'rev-parse', 'main'), sha);
     const manifest = JSON.parse(readFileSync(path.join(cwd, 'app/package.json')));
     const lock = JSON.parse(readFileSync(path.join(cwd, 'app/package-lock.json')));
     assert.equal(manifest.version, target);
     assert.equal(lock.version, target);
     assert.equal(lock.packages[''].version, target);
-    assert.match(readFileSync(env.TAG_RECORD, 'utf8'), new RegExp(`sha=${head}`));
-    assert.match(readFileSync(env.DISPATCH_RECORD, 'utf8'), new RegExp(`desktop-v${target.replace(/[.]/g, '\\.')}`));
+    if (target === '1.0.1') {
+      assert.match(readFileSync(env.TAG_RECORD, 'utf8'), new RegExp(`sha=${head}`));
+      assert.match(readFileSync(env.DISPATCH_RECORD, 'utf8'), /desktop-v1\.0\.1/);
+    } else {
+      assert.equal(git('--git-dir', remote, 'rev-parse', `desktop-release-version-${target}`), head);
+      assert.match(readFileSync(env.PR_RECORD, 'utf8'), /--base\nmain\n/);
+      assert.match(readFileSync(env.DISPATCH_RECORD, 'utf8'), /desktop\.yml/);
+      assert.throws(() => readFileSync(env.TAG_RECORD), { code: 'ENOENT' });
+    }
   });
 }
 
@@ -129,10 +149,10 @@ test('a rejected version push stops before tagging or dispatching', t => {
   const { cwd, remote, env } = fixture(t);
   writeFileSync(path.join(remote, 'hooks/pre-receive'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const result = run('bash', ['-c', tag], cwd, {
-    ...env, REQUESTED_VERSION: '1.0.2', TAG: 'desktop-v1.0.2',
+    ...env, REQUESTED_VERSION: '1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2',
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stdout, /Check branch protection/);
+  assert.match(result.stdout, /Check workflow write permissions/);
   assert.throws(() => readFileSync(env.TAG_RECORD), { code: 'ENOENT' });
   assert.throws(() => readFileSync(env.DISPATCH_RECORD), { code: 'ENOENT' });
 });
@@ -142,7 +162,7 @@ test('release preparation refuses stale branches and conflicting tags before com
   git('commit', '--allow-empty', '-m', 'Concurrent change');
   git('push', 'origin', 'main');
   git('checkout', '--detach', sha);
-  const requested = { ...env, REQUESTED_VERSION: '1.0.2', TAG: 'desktop-v1.0.2' };
+  const requested = { ...env, REQUESTED_VERSION: '1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2' };
   const stale = run('bash', ['-c', tag], cwd, requested);
   assert.notEqual(stale.status, 0);
   assert.match(stale.stdout, /has advanced/);
@@ -150,4 +170,56 @@ test('release preparation refuses stale branches and conflicting tags before com
   assert.notEqual(conflict.status, 0);
   assert.match(conflict.stdout, /already points/);
   assert.equal(git('rev-parse', 'HEAD'), sha);
+});
+
+test('merging a version PR tags the merged commit and starts the release', t => {
+  const { cwd, git, env } = fixture(t);
+  const prepare = run('bash', ['-c', tag], cwd, {
+    ...env, REQUESTED_VERSION: '1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2',
+  });
+  assert.equal(prepare.status, 0, prepare.stderr);
+  git('checkout', 'main');
+  git('merge', '--no-ff', 'desktop-release-version-1.0.2', '-m', 'Merge release PR');
+  git('push', 'origin', 'main');
+  const merged = {
+    ...env, GITHUB_SHA: git('rev-parse', 'HEAD'), EVENT_NAME: 'pull_request',
+    PR_BRANCH: 'desktop-release-version-1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2',
+  };
+  const checkResult = run('bash', ['-c', check], path.join(cwd, 'app'), merged);
+  assert.equal(checkResult.status, 0, checkResult.stderr);
+  const release = run('bash', ['-c', tag], cwd, merged);
+  assert.equal(release.status, 0, release.stderr);
+  assert.match(readFileSync(env.TAG_RECORD, 'utf8'), new RegExp(`sha=${merged.GITHUB_SHA}`));
+  assert.match(readFileSync(env.DISPATCH_RECORD, 'utf8'), /desktop-release\.yml/);
+  assert.notEqual(run('bash', ['-c', check], path.join(cwd, 'app'), {
+    ...merged, PR_BRANCH: 'desktop-release-version-1.0.3',
+  }).status, 0);
+});
+
+test('retrying an existing version PR only dispatches its checks', t => {
+  const { cwd, git, sha, env } = fixture(t);
+  const result = run('bash', ['-c', tag], cwd, {
+    ...env, REQUESTED_VERSION: '1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2',
+    EXISTING_PR: 'https://github.com/example/repo/pull/1',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(git('rev-parse', 'HEAD'), sha);
+  assert.match(readFileSync(env.DISPATCH_RECORD, 'utf8'), /desktop\.yml/);
+  assert.throws(() => readFileSync(env.TAG_RECORD), { code: 'ENOENT' });
+  assert.throws(() => readFileSync(env.PR_RECORD), { code: 'ENOENT' });
+});
+
+test('a failed PR creation can be retried without force-pushing its branch', t => {
+  const { cwd, git, sha, env } = fixture(t);
+  const requested = { ...env, REQUESTED_VERSION: '1.0.2', VERSION: '1.0.2', TAG: 'desktop-v1.0.2' };
+  const failure = run('bash', ['-c', tag], cwd, { ...requested, REJECT_PR: '1' });
+  assert.notEqual(failure.status, 0);
+  assert.match(failure.stdout, /Allow GitHub Actions/);
+  assert.throws(() => readFileSync(env.TAG_RECORD), { code: 'ENOENT' });
+  assert.throws(() => readFileSync(env.DISPATCH_RECORD), { code: 'ENOENT' });
+  git('checkout', '--detach', sha);
+  git('branch', '-D', 'desktop-release-version-1.0.2');
+  const retry = run('bash', ['-c', tag], cwd, requested);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.match(readFileSync(env.PR_RECORD, 'utf8'), /desktop-release-version-1\.0\.2/);
 });

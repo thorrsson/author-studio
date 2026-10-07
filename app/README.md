@@ -248,12 +248,22 @@ from `main`. The
 [Desktop release workflow](../.github/workflows/desktop-release.yml) publishes
 a release. Open **Actions → Desktop release → Run workflow** on `main`.
 Optionally enter a SemVer **version**, such as `1.0.2` or `1.1.0-beta.1`: the
-workflow updates `app/package.json` and its lockfile, commits and pushes the
-change to `main`, then tags that commit `desktop-v<version>`. Leave the field
-blank to release the version already in `app/package.json` without a commit.
-Branch protection must allow the workflow to push; otherwise, update the
-version through a pull request and leave the field blank. If `main` advances
-during preparation, restart the workflow on the latest commit.
+workflow updates `app/package.json` and its lockfile on a
+`desktop-release-version-<version>` branch, opens a pull request to `main`,
+and explicitly starts the desktop checks on that branch. Merge the PR after
+the required checks and reviews; the merge automatically tags the merged
+commit `desktop-v<version>` and starts the release. The workflow never pushes
+directly to protected `main` or merges the PR for you.
+Leave the field blank (or enter the current version) to release the version
+already in `app/package.json` without a PR. If `main` advances during PR
+preparation, restart the workflow on the latest commit.
+In **Settings → Actions → General → Workflow permissions**, enable
+**Allow GitHub Actions to create and approve pull requests**. The workflow
+uses `GITHUB_TOKEN` and dispatches the checks explicitly because PRs created
+with that token do not trigger normal pull-request workflows.
+Merge the version PR through GitHub or with a user/App token: a merge done
+with `GITHUB_TOKEN` will not trigger the automatic release. In that case,
+run the release workflow manually with the version field blank.
 Versions with `+build` metadata are not accepted because npm strips that
 metadata when updating the package version.
 The workflow starts a second run on the tag. That run
