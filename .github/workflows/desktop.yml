@@ -1,9 +1,10 @@
 name: Desktop app
 
+# Tests every change and builds unsigned test copies from main. Signed,
+# notarized releases are built by desktop-release.yml.
 on:
   push:
     branches: [main]
-    tags: ['desktop-v*']
     paths:
       - 'app/**'
       - 'skills/**'
@@ -22,7 +23,7 @@ permissions:
 
 concurrency:
   group: desktop-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -76,14 +77,6 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Check the tag matches the app version
-        if: startsWith(github.ref, 'refs/tags/desktop-v')
-        run: |
-          version=$(node -p "require('./package.json').version")
-          if [ "${GITHUB_REF_NAME#desktop-v}" != "$version" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
-            exit 1
-          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -94,32 +87,15 @@ jobs:
       - name: Build for macOS
         if: runner.os == 'macOS'
         env:
+          # Test copies are signed ad-hoc: they open on another Mac only after
+          # Open Anyway.
+          AUTHOR_STUDIO_SIGNING_IDENTITY: '-'
           REQUIRE_APPLE_INTELLIGENCE: '1'
-          CSC_LINK: ${{ secrets.MAC_CERTIFICATE }}
-          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -n "$CSC_LINK" ]; then
-            npm run dist:mac
-          else
-            echo "::warning::No Apple signing certificate is configured, so the macOS build is ad-hoc signed and not notarized."
-            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
-            npm run dist:mac -- -c.mac.identity=-
-          fi
+        run: npm run dist:mac
 
       - name: Build for Windows
         if: runner.os == 'Windows'
-        env:
-          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: |
-          if [ -z "$WIN_CSC_LINK" ]; then
-            echo "::warning::No Windows signing certificate is configured, so the installer is unsigned."
-            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
-          fi
-          npm run dist:win
+        run: npm run dist:win
 
       - name: Build for Linux
         if: runner.os == 'Linux'
@@ -134,25 +110,3 @@ jobs:
             app/dist/*.exe
             app/dist/*.AppImage
             app/dist/*.deb
-
-  release:
-    name: Draft release
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/desktop-v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-      - name: Create a draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --draft \
-            --title "Author Studio desktop ${GITHUB_REF_NAME#desktop-v}" \
-            --generate-notes

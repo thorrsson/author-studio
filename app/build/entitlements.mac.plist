@@ -2,13 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Electron's JavaScript engine needs these under the hardened runtime. -->
+  <!--
+    Direct distribution, so the App Sandbox is off and the Hardened Runtime is
+    on: notarization requires the latter. Electron's JavaScript engine compiles
+    code as it runs, so the app and its helpers need JIT under the Hardened
+    Runtime. Nothing else relaxes it: no unsigned executable memory and no
+    library validation exemption, since a Developer ID signature gives
+    Electron's frameworks the app's own Team ID.
+
+    Ad-hoc builds are signed without the Hardened Runtime (see
+    scripts/macos/build.sh), so they need no exemptions either.
+  -->
   <key>com.apple.security.cs.allow-jit</key>
-  <true/>
-  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-  <true/>
-  <!-- Lets ad-hoc signed builds (no Apple Developer ID) load Electron's frameworks. -->
-  <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>
 </plist>

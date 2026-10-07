@@ -20,8 +20,8 @@
     "test:e2e": "node test/e2e/smoke.mjs",
     "build:apple-helper": "node scripts/build-apple-helper.mjs",
     "icons": "electron scripts/render-icon.mjs",
-    "dist": "npm run build:apple-helper && electron-builder --publish never",
-    "dist:mac": "npm run build:apple-helper && electron-builder --mac --publish never",
+    "dist:mac": "bash scripts/macos/build.sh",
+    "release:mac": "bash scripts/macos/release.sh",
     "dist:win": "electron-builder --win --publish never",
     "dist:linux": "electron-builder --linux --publish never"
   },

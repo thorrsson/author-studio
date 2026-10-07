@@ -29,14 +29,15 @@ Download the file for your computer from the
 | Ubuntu, Debian | `Author-Studio-<version>-amd64.deb` | Open the file with your software installer, or run `sudo apt install ./Author-Studio-*.deb`. |
 | Other Linux | `Author-Studio-<version>-x86_64.AppImage` | Make the file executable, then open it. |
 
-Builds that are not signed with an Apple or Microsoft certificate get a
-warning the first time they open:
+The Mac app is signed and notarized by Apple, so it opens like any other app.
+Two kinds of download still show a warning the first time they open:
 
-- **Mac:** If macOS says it can't verify Author Studio, click **Done**. Open
+- **Windows:** The installer isn't signed yet. If SmartScreen says "Windows
+  protected your PC", click **More info**, then **Run anyway**.
+- **Mac test builds** (from a workflow run rather than the releases page): If
+  macOS says it can't verify Author Studio, click **Done**. Open
   **System Settings → Privacy & Security**, scroll down, click **Open Anyway**
   next to the Author Studio message, and confirm. You only need to do this once.
-- **Windows:** If SmartScreen says "Windows protected your PC", click
-  **More info**, then **Run anyway**.
 
 ## Choosing an AI model
 
@@ -155,29 +156,108 @@ with a separate data folder.
 | `src/main/` | Electron main process: windows, menus, settings and encrypted keys, project files, Word export. |
 | `src/preload/`, `src/renderer/` | The interface, in plain JavaScript and CSS with a strict content security policy. |
 | `native/apple-intelligence/` | Swift helper that calls Apple's Foundation Models framework. |
+| `scripts/macos/` | Build, sign, notarize, and release the Mac app. |
 | `test/` | Unit tests and the end-to-end smoke test. |
 
-### Packaging and releases
+### Packaging
 
 ```sh
-npm run dist:mac     # universal .dmg (run on macOS)
-npm run dist:win     # .exe installer (run on Windows)
-npm run dist:linux   # .AppImage and .deb (run on Linux)
+npm run dist:mac      # universal .dmg (run on macOS)
+npm run release:mac   # the same, tested, notarized, and checksummed
+npm run dist:win      # .exe installer (run on Windows)
+npm run dist:linux    # .AppImage and .deb (run on Linux)
 ```
 
-Output goes to `dist/`. Without signing certificates, macOS builds are left
-unsigned; add `-- -c.mac.identity=-` to sign them ad hoc, which lets others
-open them with **Open Anyway**. After changing `src/renderer/icon.svg`, run
+Output goes to `dist/`. After changing `src/renderer/icon.svg`, run
 `npm run icons` and commit the PNGs in `build/`.
 
-The [Desktop app workflow](../.github/workflows/desktop.yml) runs the tests on
-macOS, Windows, and Linux for every change. Pushing a tag such as
-`desktop-v1.0.0` (matching `version` in `package.json`) builds all three
-platforms and creates a draft GitHub release with the installers. Signing is
-optional and uses these repository secrets:
+### Signing and notarizing for macOS
 
-| Secret | Purpose |
+The Mac app ships as a signed, notarized `.dmg`, so Gatekeeper opens it without
+a warning. Three scripts in `scripts/macos/` do the work:
+
+| Script | What it does |
 | --- | --- |
-| `MAC_CERTIFICATE`, `MAC_CERTIFICATE_PASSWORD` | Developer ID Application certificate (base64 `.p12`) and its password. |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Notarization, so macOS opens the app without a warning. |
-| `WINDOWS_CERTIFICATE`, `WINDOWS_CERTIFICATE_PASSWORD` | Windows code signing certificate (base64 `.pfx`) and its password. |
+| `build.sh` (`npm run dist:mac`) | Builds the Apple Intelligence helper and the universal app, signs every binary with the Hardened Runtime and a secure timestamp, then signs the disk image. |
+| `notarize.sh [dmg]` | Submits the image to Apple, waits for the verdict, staples the ticket, and checks the image and the app inside it with Gatekeeper. |
+| `release.sh` (`npm run release:mac`) | Unit tests, then `build.sh`, then `notarize.sh`, then a SHA-256 checksum beside the image. |
+
+Without a Developer ID, the app is signed ad hoc and notarization is skipped,
+with a warning: the build runs on the Mac that made it, and on others only
+after **Open Anyway**. `AUTHOR_STUDIO_REQUIRE_NOTARIZATION=1` turns that
+warning into a failure, which is how the release workflow runs, so a release
+can't quietly ship unnotarized. `AUTHOR_STUDIO_SKIP_TESTS=1` skips the unit
+tests.
+
+**Signing.** The scripts use the first `Developer ID Application` identity in
+the keychain; `security find-identity -v -p codesigning` lists them. To choose
+one, or to force an ad hoc build with `-`:
+
+```sh
+export AUTHOR_STUDIO_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)"
+```
+
+`build/entitlements.mac.plist` only allows JIT compilation, which Electron's
+JavaScript engine needs under the Hardened Runtime. Nothing else relaxes it.
+
+**Notarizing.** Credentials come from the environment, tried in this order:
+
+```sh
+# 1. A keychain profile, best on a laptop. Store it once:
+xcrun notarytool store-credentials author-studio \
+  --apple-id you@example.com --team-id TEAMID --password <app-specific-password>
+export AUTHOR_STUDIO_NOTARY_PROFILE=author-studio
+
+# 2. An App Store Connect API key, best for CI. NOTARY_API_KEY_P8 is the .p8
+#    file's path, its contents, or its contents in base64:
+export NOTARY_API_KEY_ID=... NOTARY_API_ISSUER_ID=... NOTARY_API_KEY_P8=~/private_keys/AuthKey_XXX.p8
+
+# 3. An Apple ID with an app-specific password (never the account password):
+export AUTHOR_STUDIO_APPLE_ID=you@example.com AUTHOR_STUDIO_APPLE_PASSWORD=abcd-efgh-ijkl-mnop
+```
+
+`notarytool` exits successfully for a submission Apple went on to reject, so
+`notarize.sh` checks the verdict itself and prints Apple's log when it isn't
+`Accepted`.
+
+### Releases
+
+The [Desktop app workflow](../.github/workflows/desktop.yml) runs the tests on
+macOS, Windows, and Linux for every change, and builds unsigned test copies
+from `main`. Pushing a tag such as `desktop-v1.0.0` (matching `version` in
+`package.json`) runs the
+[Desktop release workflow](../.github/workflows/desktop-release.yml). It builds,
+signs, and notarizes the Mac image, tests the signed app, builds the Windows
+and Linux installers, and attaches them all to a draft GitHub release for you
+to check and publish.
+
+```sh
+git tag desktop-v1.0.0 && git push origin desktop-v1.0.0
+```
+
+The Mac build needs these secrets, which belong to a **`release` environment**
+rather than to the repository:
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | The Developer ID Application certificate and private key, exported from Keychain Access as `.p12`, then `base64 < certificate.p12 \| tr -d '\n' \| pbcopy`. |
+| `MACOS_CERTIFICATE_PASSWORD` | The password set during that export. |
+| `MACOS_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
+| `MACOS_TEAM_ID` | The 10-character Team ID. |
+| `NOTARY_API_KEY_P8` | The App Store Connect `AuthKey_<KEY_ID>.p8` file, encoded with `base64 < AuthKey_<KEY_ID>.p8 \| tr -d '\n' \| pbcopy`. |
+| `NOTARY_API_KEY_ID` | The key's ID, from App Store Connect. |
+| `NOTARY_API_ISSUER_ID` | The key's issuer ID, from App Store Connect. |
+
+Check the `.p12` with `openssl pkcs12 -in certificate.p12 -noout` before
+uploading it. If that reports an unsupported `RC2-40-CBC` algorithm, the export
+uses legacy encryption and must be re-exported before CI can import it.
+
+Give the `release` environment required reviewers, and limit its deployments
+to the `desktop-v*` tag pattern. Restricting the workflow to tags isn't a
+control on its own: anyone who can push such a tag also chooses the scripts it
+points at, and the job runs them with the signing and notarization keys in
+scope. The certificate is imported into a throwaway keychain that is deleted at
+the end of the job.
+
+Windows signing is optional: set `WINDOWS_CERTIFICATE` (a base64 `.pfx`) and
+`WINDOWS_CERTIFICATE_PASSWORD` as repository secrets to sign the installer.

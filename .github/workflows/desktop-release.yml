@@ -1,0 +1,219 @@
+name: Desktop release
+
+# Builds a release from a desktop-v<version> tag: a signed and notarized disk
+# image for macOS, plus the Windows and Linux installers, attached to a draft
+# GitHub release for a person to check and publish.
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the app version
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF" == refs/tags/* && "${GITHUB_REF_NAME#desktop-v}" != "$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
+            exit 1
+          fi
+          echo "Building Author Studio $version"
+
+  macos:
+    name: macOS (signed and notarized)
+    needs: version
+    runs-on: macos-26
+    # The Developer ID private key and the notarization key only exist inside
+    # this environment, so the job cannot start until a reviewer approves the
+    # run. Restricting the workflow to tags is not by itself a control: anyone
+    # who can push a desktop-v* tag can also push whatever scripts that tag
+    # points at, and the job would run them with both secrets in scope.
+    # Configure the environment with required reviewers, and limit its
+    # deployments to the desktop-v* tag pattern, or this line is decoration.
+    environment: release
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # Before the certificate is imported, so package install scripts never
+      # run alongside the signing key.
+      - run: npm ci
+
+      # The certificate lives in a throwaway keychain rather than the login one:
+      # a runner's login keychain is unlocked but not visible to codesign's
+      # search list, and a dedicated keychain is deleted with the runner.
+      - name: Import the Developer ID certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_password="$(uuidgen)"
+          certificate="$RUNNER_TEMP/certificate.p12"
+
+          if [[ -z "$CERTIFICATE_P12" || -z "$CERTIFICATE_PASSWORD" ]]; then
+            echo "error: MACOS_CERTIFICATE_P12 and MACOS_CERTIFICATE_PASSWORD must both be set in the release environment" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$certificate"; then
+            echo "error: MACOS_CERTIFICATE_P12 is not valid base64" >&2
+            exit 1
+          fi
+          if openssl pkcs12 -in "$certificate" -passin env:CERTIFICATE_PASSWORD -noout 2>/dev/null; then
+            :
+          elif openssl pkcs12 -legacy -in "$certificate" -passin env:CERTIFICATE_PASSWORD -noout 2>/dev/null; then
+            echo "error: MACOS_CERTIFICATE_P12 uses legacy RC2 encryption, which the runner cannot reliably import" >&2
+            echo "Convert or re-export it using modern encryption before updating the secret" >&2
+            exit 1
+          else
+            echo "error: MACOS_CERTIFICATE_P12 does not decode to a valid PKCS#12 file, or MACOS_CERTIFICATE_PASSWORD is incorrect" >&2
+            printf '%s\n' "Re-export the identity and private key as .p12, then update the secret with: base64 < certificate.p12 | tr -d '\\n' | pbcopy" >&2
+            exit 1
+          fi
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -f pkcs12 -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without this codesign blocks on a GUI prompt that nobody can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" > /dev/null
+          # Prepended to the existing search list, one keychain path per word.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$certificate"
+
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build, sign, notarize
+        env:
+          AUTHOR_STUDIO_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          AUTHOR_STUDIO_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          AUTHOR_STUDIO_REQUIRE_NOTARIZATION: '1'
+          REQUIRE_APPLE_INTELLIGENCE: '1'
+        run: npm run release:mac
+
+      - name: Discard the signing key
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+
+      # The signed app runs under the Hardened Runtime, which the source build
+      # tested by desktop.yml does not, so check it still starts.
+      - name: End-to-end test of the signed app
+        env:
+          AUTHOR_STUDIO_EXECUTABLE: dist/mac-universal/Author Studio.app/Contents/MacOS/Author Studio
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: author-studio-macOS
+          if-no-files-found: error
+          path: |
+            app/dist/*.dmg
+            app/dist/*.dmg.sha256
+
+  build:
+    name: ${{ matrix.name }}
+    needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+
+      - name: Build for Windows
+        if: runner.os == 'Windows'
+        env:
+          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$WIN_CSC_LINK" ]; then
+            echo "::warning::No Windows signing certificate is configured, so the installer is unsigned."
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+          fi
+          npm run dist:win
+
+      - name: Build for Linux
+        if: runner.os == 'Linux'
+        run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: author-studio-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            app/dist/*.exe
+            app/dist/*.AppImage
+            app/dist/*.deb
+
+  release:
+    name: Draft release
+    needs: [macos, build]
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Attach the installers to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "Author Studio desktop ${GITHUB_REF_NAME#desktop-v}" \
+            --generate-notes \
+            --verify-tag \
+          || gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber

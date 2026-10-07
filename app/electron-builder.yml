@@ -1,10 +1,12 @@
 # Packaging for macOS, Windows, and Linux. See app/README.md for how to build,
-# sign, and release.
+# sign, and release. On macOS, build through scripts/macos/ (npm run dist:mac),
+# which chooses the signing identity and signs and notarizes the disk image.
 appId: io.github.thorrsson.author-studio
 productName: Author Studio
 copyright: Copyright © Author Studio contributors
 artifactName: Author-Studio-${version}-${arch}.${ext}
-# Releases are uploaded by .github/workflows/desktop.yml; the app does not auto-update.
+# Releases are uploaded by .github/workflows/desktop-release.yml; the app does
+# not auto-update.
 publish: null
 
 directories:
@@ -33,6 +35,9 @@ mac:
   minimumSystemVersion: "12.0"
   hardenedRuntime: true
   gatekeeperAssess: false
+  # scripts/macos/notarize.sh notarizes the signed disk image instead, which
+  # covers the app inside it.
+  notarize: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   # The Apple Intelligence helper is already a universal binary.
@@ -45,6 +50,9 @@ mac:
 
 dmg:
   title: ${productName}
+  # Signing and stapling change the image after it is built, and the app does
+  # not auto-update, so there is no update blockmap to keep in step.
+  writeUpdateInfo: false
 
 win:
   icon: build/icon-windows.png
@@ -67,7 +75,7 @@ linux:
   category: Office
   synopsis: A human-directed fiction-writing studio
   description: Plan, draft, and revise fiction with Claude, OpenAI, or a local AI server, with you approving every change to your story.
-  maintainer: Author Studio contributors <thorrsson@users.noreply.github.com>
+  maintainer: Author Studio contributors <tim@thunter.ca>
   target:
     - target: AppImage
       arch: x64
