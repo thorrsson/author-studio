@@ -260,7 +260,7 @@ version with a suffix, such as `1.1.0-beta.1`, is published as a pre-release.
 Pushing the tag yourself does the same thing:
 
 ```sh
-git tag desktop-v1.0.0 && git push origin desktop-v1.0.0
+git tag desktop-v1.0.1 && git push origin desktop-v1.0.1
 ```
 
 A version that's already released is refused. If a release run fails, re-run
