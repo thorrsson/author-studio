@@ -85,11 +85,11 @@ jobs:
             :
           elif openssl pkcs12 -legacy -in "$certificate" -passin env:CERTIFICATE_PASSWORD -noout 2>/dev/null; then
             echo "error: MACOS_CERTIFICATE_P12 uses legacy RC2 encryption, which the runner cannot reliably import" >&2
-            echo "Convert or re-export it using modern encryption before updating the secret" >&2
+            echo "Keychain Access exports use RC2. Set the secrets with app/scripts/macos/push-release-secrets.sh, which repackages it with 3DES" >&2
             exit 1
           else
             echo "error: MACOS_CERTIFICATE_P12 does not decode to a valid PKCS#12 file, or MACOS_CERTIFICATE_PASSWORD is incorrect" >&2
-            printf '%s\n' "Re-export the identity and private key as .p12, then update the secret with: base64 < certificate.p12 | tr -d '\\n' | pbcopy" >&2
+            echo "Export the identity and private key from Keychain Access as .p12, then set the secrets with app/scripts/macos/push-release-secrets.sh" >&2
             exit 1
           fi
 

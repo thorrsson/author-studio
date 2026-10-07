@@ -41,8 +41,10 @@ resolve_signing_identity() {
         return
     fi
     local found
+    # awk reads to the end rather than exiting at the first match, which would
+    # leave security writing to a closed pipe and fail the pipeline.
     found="$(security find-identity -v -p codesigning 2>/dev/null \
-        | awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+        | awk -F'"' '/Developer ID Application/ && !found { print $2; found = 1 }')"
     if [[ -n "${found}" ]]; then
         printf '%s' "${found}"
         return

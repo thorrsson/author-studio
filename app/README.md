@@ -240,24 +240,54 @@ rather than to the repository:
 
 | Secret | Value |
 | --- | --- |
-| `MACOS_CERTIFICATE_P12` | The Developer ID Application certificate and private key, exported from Keychain Access as `.p12`, then `base64 < certificate.p12 \| tr -d '\n' \| pbcopy`. |
+| `MACOS_CERTIFICATE_P12` | The Developer ID Application certificate and its private key, exported from Keychain Access as `.p12`, base64-encoded. |
 | `MACOS_CERTIFICATE_PASSWORD` | The password set during that export. |
 | `MACOS_SIGNING_IDENTITY` | `Developer ID Application: Your Name (TEAMID)` |
 | `MACOS_TEAM_ID` | The 10-character Team ID. |
-| `NOTARY_API_KEY_P8` | The App Store Connect `AuthKey_<KEY_ID>.p8` file, encoded with `base64 < AuthKey_<KEY_ID>.p8 \| tr -d '\n' \| pbcopy`. |
+| `NOTARY_API_KEY_P8` | The App Store Connect `AuthKey_<KEY_ID>.p8` file, base64-encoded. |
 | `NOTARY_API_KEY_ID` | The key's ID, from App Store Connect. |
 | `NOTARY_API_ISSUER_ID` | The key's issuer ID, from App Store Connect. |
 
-Check the `.p12` with `openssl pkcs12 -in certificate.p12 -noout` before
-uploading it. If that reports an unsupported `RC2-40-CBC` algorithm, the export
-uses legacy encryption and must be re-exported before CI can import it.
+To set them, put them in a `.env` file at the top of the repository, which is
+gitignored. Files can be given by path, relative to the `.env` file or from
+`~/`, and the script encodes them:
 
-Give the `release` environment required reviewers, and limit its deployments
-to the `desktop-v*` tag pattern. Restricting the workflow to tags isn't a
-control on its own: anyone who can push such a tag also chooses the scripts it
-points at, and the job runs them with the signing and notarization keys in
-scope. The certificate is imported into a throwaway keychain that is deleted at
-the end of the job.
+```sh
+export MACOS_CERTIFICATE_P12=~/Desktop/DeveloperID.p12
+export MACOS_CERTIFICATE_PASSWORD='the export password'
+export MACOS_SIGNING_IDENTITY='Developer ID Application: Your Name (TEAMID)'
+export MACOS_TEAM_ID=TEAMID
+export NOTARY_API_KEY_P8=~/private_keys/AuthKey_KEYID.p8
+export NOTARY_API_KEY_ID=KEYID
+export NOTARY_API_ISSUER_ID=00000000-0000-0000-0000-000000000000
+```
+
+Then, with [`gh`](https://cli.github.com) signed in as an admin of the
+repository:
+
+```sh
+app/scripts/macos/push-release-secrets.sh --dry-run   # checks, changes nothing
+app/scripts/macos/push-release-secrets.sh
+```
+
+Nothing is uploaded until every value passes the workflow's own checks and a
+few more. The password must open the `.p12`, which must hold the private key
+of an unexpired certificate named by `MACOS_SIGNING_IDENTITY`. Apple must also
+accept the API key. Keychain Access encrypts `.p12` files with RC2, which the
+workflow refuses, so the script repackages them with 3DES under the same
+password; the file itself is left alone. Values reach `gh` on standard input
+and are never printed.
+
+If the `release` environment doesn't exist, the script creates it, limited to
+`desktop-v*` tags. If it still has GitHub's default settings, the script
+limits it the same way, and it leaves settings you chose alone. Also add
+yourself as a required reviewer, under **Settings → Environments → release**.
+Restricting the workflow to tags isn't a control on its own: anyone who can
+push such a tag also chooses the scripts it points at, and the job runs them
+with the signing and notarization keys in scope. Because of the tag limit, a
+release run started by hand from the Actions tab must use a `desktop-v*` tag,
+not a branch. The certificate is imported into a throwaway keychain that is
+deleted at the end of the job.
 
 Windows signing is optional: set `WINDOWS_CERTIFICATE` (a base64 `.pfx`) and
 `WINDOWS_CERTIFICATE_PASSWORD` as repository secrets to sign the installer.
