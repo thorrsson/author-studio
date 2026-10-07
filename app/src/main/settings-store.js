@@ -3,6 +3,7 @@
 // Electron's safeStorage.
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { addressOrigin } from '../core/address.js';
 import { normalizeBaseUrl } from '../providers/openai.js';
 import { clampContext, CONNECTION_TYPES, connectionLabel, DEFAULT_COMPATIBLE_CONTEXT } from '../providers/registry.js';
 import { AppError, readJsonFile, writeFileAtomic } from './files.js';
@@ -46,7 +47,7 @@ export function sanitizeConnection(input, { id, draft = false } = {}) {
   if (!Object.hasOwn(CONNECTION_TYPES, type)) throw new AppError('invalid-input', 'Choose which kind of AI model to connect.');
   const info = CONNECTION_TYPES[type];
   const connection = {
-    id: id ?? (typeof input.id === 'string' && /^[\w-]{1,64}$/.test(input.id) ? input.id : randomUUID()),
+    id: id ?? (typeof input.id === 'string' && /^[A-Za-z0-9][\w-]{0,63}$/.test(input.id) ? input.id : randomUUID()),
     type,
     name: line(input.name, 60) || info.short,
     model: type === 'apple' ? 'apple-on-device' : line(input.model, 200),
@@ -198,11 +199,18 @@ export async function createSettingsStore({ dir, safeStorage, keyStorage } = {})
         throw new AppError('invalid-input', `You can save up to ${MAX_CONNECTIONS} connections. Remove one first.`);
       }
       const saved = sanitizeConnection(input, existing ? { id: existing.id } : {});
-      if (apiKey !== undefined) {
-        if (!CONNECTION_TYPES[saved.type].needsKey && saved.type !== 'compatible' && apiKey) {
+      if (existing && saved.type !== existing.type) {
+        throw new AppError('invalid-input', 'A saved connection cannot switch to another kind of model. Add a new connection instead.');
+      }
+      // A saved key belongs to the server it was entered for, so moving the
+      // connection to another server drops the key unless it is entered again.
+      const moved = existing?.type === 'compatible' && addressOrigin(saved.baseUrl) !== addressOrigin(existing.baseUrl);
+      const key = apiKey === undefined && moved ? '' : apiKey;
+      if (key !== undefined) {
+        if (!CONNECTION_TYPES[saved.type].needsKey && saved.type !== 'compatible' && key) {
           throw new AppError('invalid-input', 'This kind of connection does not use an API key.');
         }
-        await setKey(saved.id, apiKey);
+        await setKey(saved.id, key);
       }
       if (existing) settings.connections[settings.connections.indexOf(existing)] = saved;
       else settings.connections.push(saved);

@@ -1,5 +1,6 @@
 // The project snapshot keeps the exact shape of the plugin's state template so
 // snapshots move freely between the desktop app and Copilot/Claude sessions.
+import { isSafeArtifactId } from './labels.js';
 
 export const STATUSES = Object.freeze(['idle', 'planning', 'drafting', 'editing', 'review']);
 
@@ -151,6 +152,8 @@ export function validateSnapshot(input) {
     } else {
       if (!isPlainObject(artifact) || !isString(artifact.id) || !artifact.id.trim() || !isString(artifact.type) || !isString(artifact.content)) {
         errors.push('pending_review.artifact needs an id, type, and its full content.');
+      } else if (!isSafeArtifactId(artifact.id)) {
+        errors.push('pending_review.artifact.id cannot be a reserved name such as __proto__ or constructor.');
       } else if (artifact.chapter !== undefined && artifact.chapter !== '' && !isPositiveInteger(artifact.chapter)) {
         errors.push('pending_review.artifact.chapter must be a positive whole number.');
       }

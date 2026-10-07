@@ -48,7 +48,7 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 // Pure modules the renderer shares with the engine (no Node.js APIs).
-const SHARED_MODULES = new Set(['core/labels.js', 'core/markdown.js', 'core/patch.js', 'core/state.js']);
+const SHARED_MODULES = new Set(['core/address.js', 'core/labels.js', 'core/markdown.js', 'core/patch.js', 'core/state.js']);
 const devTools = !app.isPackaged || process.env.AUTHOR_STUDIO_DEVTOOLS === '1';
 
 if (process.env.AUTHOR_STUDIO_USER_DATA) app.setPath('userData', path.resolve(process.env.AUTHOR_STUDIO_USER_DATA));

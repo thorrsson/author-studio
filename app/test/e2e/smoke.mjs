@@ -111,7 +111,12 @@ async function main() {
   const problems = [];
   let page;
   const shot = async (name) => {
-    if (shotsDir) await page.screenshot({ path: path.join(shotsDir, `${name}.png`) });
+    if (!shotsDir) return;
+    // Let opening animations finish so a screenshot is not caught mid-fade.
+    await page.evaluate(() => Promise.all(document.getAnimations()
+      .filter((animation) => animation.effect?.getTiming().iterations !== Infinity)
+      .map((animation) => animation.finished.catch(() => {}))));
+    await page.screenshot({ path: path.join(shotsDir, `${name}.png`) });
   };
   const step = (name) => console.log(`- ${name}`);
   const dialog = () => page.getByRole('dialog');
@@ -201,18 +206,31 @@ async function main() {
     await page.waitForSelector('.toast:has-text("Saved export.docx")');
     assert.equal((await readFile(exportPath)).subarray(0, 2).toString(), 'PK');
 
-    step('settings, dark theme, and help');
+    step('settings, saved keys, dark theme, and help');
     await sidebar().getByRole('button', { name: 'Settings' }).click();
     await page.getByRole('heading', { name: 'Settings', level: 1 }).waitFor();
     await shot('10-settings');
+    await page.click('.connection-row .btn:has-text("Edit")');
+    await page.fill('#connection-key', 'local-token-abc');
+    await dialog().getByRole('button', { name: 'Save changes' }).click();
+    await page.waitForSelector('.modal-overlay', { state: 'detached' });
+    await page.click('.connection-row .btn:has-text("Edit")');
+    assert.match(await page.getAttribute('#connection-key', 'placeholder'), /Saved key/);
+    await page.fill('#connection-url', `http://localhost:${server.port}/v1`);
+    await page.press('#connection-url', 'Tab');
+    await page.waitForSelector(`.modal .hint:has-text("only sent to ${server.url}")`);
+    await shot('11-moved-server');
+    assert.match(await page.getAttribute('#connection-key', 'placeholder'), /Enter the key again/);
+    await dialog().getByRole('button', { name: 'Cancel' }).click();
+    await page.waitForSelector('.modal-overlay', { state: 'detached' });
     await page.click('.segment:has-text("Dark")');
     await page.waitForFunction(() => matchMedia('(prefers-color-scheme: dark)').matches);
     await sidebar().getByRole('button', { name: 'The Lantern Keeper' }).click();
     await page.getByRole('heading', { name: 'The Lantern Keeper', level: 1 }).waitFor();
-    await shot('11-dark-workspace');
+    await shot('12-dark-workspace');
     await sidebar().getByRole('button', { name: 'Help' }).click();
     await page.getByRole('heading', { name: 'How Author Studio works' }).waitFor();
-    await shot('12-help-dark');
+    await shot('13-help-dark');
     await sidebar().getByRole('button', { name: 'Settings' }).click();
     await page.click('.segment:has-text("Match system")');
 

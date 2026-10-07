@@ -17,6 +17,13 @@ export function parseArtifactId(id) {
   return { base: value, version: 1 };
 }
 
+// Artifact ids are keys of plain objects, so neither an id nor its base may be
+// a name every object already has, such as __proto__ or constructor.
+export function isSafeArtifactId(id) {
+  if (typeof id !== 'string' || !id.trim()) return false;
+  return !(id in Object.prototype) && !(parseArtifactId(id).base in Object.prototype);
+}
+
 export function typeLabel(type) {
   return TYPE_LABELS[type] ?? (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Artifact');
 }

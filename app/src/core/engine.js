@@ -2,7 +2,7 @@
 // canon changes; this module decides acceptance, Tier 2 gates, progress, and
 // logging according to skills/author-studio/SKILL.md. Every exported function
 // returns a new project object and never mutates its input.
-import { artifactLabel, formatConfidence, parseArtifactId } from './labels.js';
+import { artifactLabel, formatConfidence, isSafeArtifactId, parseArtifactId } from './labels.js';
 import { applyPatch, detectCanonChanges, isEmptyPatch, mergePatches, normalizePatch, normKey } from './patch.js';
 import { countWords, parseAssessment, splitResponse, visibleArtifact } from './parse.js';
 import {
@@ -150,7 +150,7 @@ function requireInitialized(project) {
 
 function requireNoGate(project) {
   if (project.gate) {
-    const artifact = project.artifacts[project.gate.artifactId];
+    const artifact = artifactById(project, project.gate.artifactId);
     throw new EngineError(
       'gate-pending',
       `${artifactLabel(artifact) || 'An artifact'} is waiting for your review. Approve it, request changes, or reject it before starting another step.`,
@@ -162,6 +162,17 @@ function requireNoGate(project) {
 function requireGate(project) {
   if (!project.gate) throw new EngineError('no-gate', 'Nothing is waiting for review.');
   return project.gate;
+}
+
+// Looks up only the project's own artifacts, never inherited object members.
+function artifactById(project, id) {
+  return typeof id === 'string' && Object.hasOwn(project.artifacts, id) ? project.artifacts[id] : undefined;
+}
+
+function gateArtifact(project, gate) {
+  const artifact = artifactById(project, gate.artifactId);
+  if (!artifact) throw new EngineError('invalid-project', 'The artifact waiting for your review is missing from this project.');
+  return artifact;
 }
 
 function patchSummary(patch) {
@@ -424,7 +435,7 @@ export async function startProject(input, template, ctx = {}) {
 }
 
 function resolveTarget(project, targetId, purpose) {
-  const artifact = targetId ? project.artifacts[targetId] : latestAccepted(project);
+  const artifact = targetId ? artifactById(project, targetId) : latestAccepted(project);
   if (!artifact) {
     throw new EngineError('invalid-input', targetId ? `There is no artifact called ${targetId}.` : `There is nothing accepted yet to ${purpose}.`);
   }
@@ -493,7 +504,7 @@ export function approvePending(project, { confirmedContradictions } = {}, ctx = 
     );
   }
   const next = structuredClone(project);
-  const artifact = next.artifacts[gate.artifactId];
+  const artifact = gateArtifact(next, gate);
   let action;
   if (gate.kind === 'review') {
     next.state.project.status = phaseFor(artifact);
@@ -513,7 +524,7 @@ export function approvePending(project, { confirmedContradictions } = {}, ctx = 
 export function rejectPending(project, ctx = {}) {
   const gate = requireGate(project);
   const next = structuredClone(project);
-  const artifact = next.artifacts[gate.artifactId];
+  const artifact = gateArtifact(next, gate);
   if (gate.kind === 'candidate') artifact.status = 'rejected';
   next.state.project.status = gate.previousStatus;
   clearGate(next);
@@ -549,7 +560,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
   const gate = requireGate(project);
   const text = cleanText(notes, LIMITS.notes, 'Your notes');
   if (!text) throw new EngineError('invalid-input', 'Describe the changes you want.');
-  const current = project.artifacts[gate.artifactId];
+  const current = gateArtifact(project, gate);
   const worker = current.worker;
   const resources = ctx.resources;
   if (!resources.workers.roles[worker]) {
@@ -614,7 +625,7 @@ async function continuation(project, current, ctx) {
 // Continues an unfinished pending candidate in place, then re-presents the gate.
 export async function continuePending(project, ctx = {}) {
   const gate = requireGate(project);
-  const current = project.artifacts[gate.artifactId];
+  const current = gateArtifact(project, gate);
   if (gate.kind !== 'candidate' || current.complete !== false) {
     throw new EngineError('invalid-input', 'Only an unfinished candidate can be continued.');
   }
@@ -703,7 +714,7 @@ export async function secondOpinion(project, { artifactId, focus, allowSingle = 
     if (artifactId && artifactId !== project.gate.artifactId) {
       throw new EngineError('invalid-input', 'While a review is pending, only the pending candidate can get a second opinion.');
     }
-    artifact = project.artifacts[project.gate.artifactId];
+    artifact = gateArtifact(project, project.gate);
   } else {
     artifact = resolveTarget(project, artifactId, 'review');
   }
@@ -975,8 +986,10 @@ export function importSnapshot(input, template, { consentToMigrations = false } 
 }
 
 function validArtifact(artifact, id) {
-  return isPlainObject(artifact)
+  return isSafeArtifactId(id)
+    && isPlainObject(artifact)
     && artifact.id === id
+    && isSafeArtifactId(artifact.base)
     && typeof artifact.type === 'string'
     && typeof artifact.content === 'string'
     && typeof artifact.worker === 'string'
@@ -1002,8 +1015,9 @@ export function checkProject(input) {
   }
   const pending = input.state?.pending_review;
   if (input.gate) {
-    const artifact = input.artifacts?.[input.gate.artifactId];
-    if (!artifact || !pending || pending.artifact?.id !== input.gate.artifactId) errors.push('The pending review does not match its artifact.');
+    const id = input.gate.artifactId;
+    const artifact = isPlainObject(input.artifacts) && typeof id === 'string' && Object.hasOwn(input.artifacts, id) ? input.artifacts[id] : undefined;
+    if (!artifact || !pending || pending.artifact?.id !== id) errors.push('The pending review does not match its artifact.');
     if (!['candidate', 'review'].includes(input.gate.kind)) errors.push('The pending review has an unknown kind.');
     if (!Array.isArray(input.gate.contradictions) || !Array.isArray(input.gate.reasons)) errors.push('The pending review is damaged.');
     if (!STATUSES.includes(input.gate.previousStatus) || input.gate.previousStatus === 'review') errors.push('The pending review has no status to restore.');

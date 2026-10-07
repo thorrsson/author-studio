@@ -420,6 +420,43 @@ test('rejects invalid snapshots without changing anything', () => {
   });
 });
 
+test('reserved object names are never artifact ids', async () => {
+  const snapshot = structuredClone(template);
+  snapshot.project = { title: 'Bell', concept: 'c', genre: 'mystery', status: 'review' };
+  snapshot.draft_progress.tier2_pending = true;
+  for (const id of ['__proto__', 'constructor', 'toString-v2']) {
+    snapshot.pending_review = {
+      artifact: { id, type: 'chapter', content: 'Text' },
+      worker: 'Scene Writer',
+      confidence: 0.5,
+      flags: [],
+      proposed_changes: {},
+      previous_status: 'drafting',
+    };
+    assert.throws(() => importSnapshot(JSON.parse(JSON.stringify(snapshot)), template), assertCode('invalid-snapshot'));
+  }
+
+  const { project, ctx } = await started();
+  ctx.generate = makeCtx([good('Plan', { confidence: 0.3 })]).ctx.generate;
+  const { project: gated } = await runStep(project, { action: 'plot' }, ctx);
+  const id = gated.gate.artifactId;
+  const missing = JSON.parse(JSON.stringify(gated));
+  missing.artifacts = {};
+  missing.gate.artifactId = '__proto__';
+  missing.state.pending_review.artifact.id = '__proto__';
+  assert.ok(checkProject(missing).length > 0);
+  assert.throws(() => importProjectBackup(missing), assertCode('invalid-project'));
+  const ownKey = JSON.parse(JSON.stringify(gated).replaceAll(`"${id}"`, '"__proto__"'));
+  assert.ok(Object.hasOwn(ownKey.artifacts, '__proto__'));
+  assert.ok(checkProject(ownKey).some((error) => /damaged/.test(error)));
+
+  const slipped = structuredClone(gated);
+  slipped.gate.artifactId = 'constructor';
+  assert.throws(() => approvePending(slipped, {}), assertCode('invalid-project'));
+  assert.throws(() => rejectPending(slipped), assertCode('invalid-project'));
+  assert.equal(({}).status, undefined, 'Object.prototype is untouched');
+});
+
 test('project backups round-trip and damaged files are refused', async () => {
   const { project, ctx } = await started();
   ctx.generate = makeCtx([good('Plan', { confidence: 0.3 })]).ctx.generate;

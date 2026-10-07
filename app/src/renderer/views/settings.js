@@ -1,5 +1,6 @@
 // Settings: AI model connections, reviewers, writing style, appearance, and
 // privacy. API keys are sent to the main process and never come back.
+import { addressOrigin } from '../../core/address.js';
 import { call } from '../api.js';
 import { h, preserveFocus } from '../dom.js';
 import { actions, state } from '../store.js';
@@ -249,7 +250,11 @@ export function openConnectionEditor({ type, connection } = {}) {
 
   function keyControl() {
     if (!info.needsKey && kind !== 'compatible') return null;
-    const placeholder = hasSavedKey() ? `Saved key ${existing.keyHint || ''} (leave blank to keep it)` : info.keyHint ?? (kind === 'compatible' ? 'Only if your server requires one' : '');
+    const savedKey = hasSavedKey();
+    const keyStaysBehind = savedKey && kind === 'compatible' && addressOrigin(form.baseUrl) !== addressOrigin(existing.baseUrl);
+    const placeholder = keyStaysBehind
+      ? 'Enter the key again for this address'
+      : savedKey ? `Saved key ${existing.keyHint || ''} (leave blank to keep it)` : info.keyHint ?? (kind === 'compatible' ? 'Only if your server requires one' : '');
     const input = h('input', {
       id: 'connection-key',
       dataset: { key: 'connection-key' },
@@ -269,7 +274,9 @@ export function openConnectionEditor({ type, connection } = {}) {
     const hints = [];
     if (info.keyUrl) hints.push(h('span', null, 'Create a key at '), externalLink(new URL(info.keyUrl).hostname, info.keyUrl), h('span', null, '. '));
     hints.push(h('span', null, state.settings.keyStorage.mode === 'encrypted' ? 'Keys are stored encrypted on this computer.' : state.settings.keyStorage.message));
-    if (hasSavedKey()) {
+    if (keyStaysBehind) {
+      hints.push(' ', h('span', null, `The saved key is only sent to ${addressOrigin(existing.baseUrl)}, so enter it again if this server needs one.`));
+    } else if (savedKey) {
       hints.push(' ', h('button', { class: 'link-button danger-text', type: 'button', onclick: () => { form.removeKey = true; form.apiKey = ''; render(); } }, 'Remove saved key'));
     }
     return h('div', { class: 'field' }, h('label', { for: 'connection-key' }, kind === 'compatible' ? 'API key (optional)' : 'API key'), h('div', { class: 'input-row' }, input, toggle), h('p', { class: 'hint' }, hints));

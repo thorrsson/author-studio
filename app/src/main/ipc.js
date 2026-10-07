@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { addressOrigin } from '../core/address.js';
 import {
   addAuthorText,
   approvePending,
@@ -125,9 +126,15 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return status;
   }
 
-  function keyFor(draft, apiKey) {
+  // A saved key is only used with the connection it was saved for: the same
+  // kind of model and, for a server, the same origin. A changed draft must
+  // not be able to send it to another host.
+  function keyFor(connection, apiKey) {
     if (typeof apiKey === 'string') return apiKey.trim();
-    return typeof draft?.id === 'string' ? settings.getKey(draft.id) : '';
+    const saved = settings.connection(connection.id);
+    if (!saved || saved.type !== connection.type) return '';
+    if (saved.type === 'compatible' && addressOrigin(saved.baseUrl) !== addressOrigin(connection.baseUrl)) return '';
+    return settings.getKey(saved.id);
   }
 
   function providerFor(connection, apiKey) {
@@ -266,7 +273,7 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
 
     'providers:listModels': async ({ connection: draft, apiKey }) => {
       const connection = sanitizeConnection(draft, { draft: true });
-      const key = keyFor(draft, apiKey);
+      const key = keyFor(connection, apiKey);
       if (connection.type === 'apple') {
         const status = await appleStatus({ refresh: true });
         return { models: [{ id: 'apple-on-device', name: 'On-device model', contextWindow: status.contextWindow }], defaultModel: 'apple-on-device', status };
@@ -283,7 +290,7 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
 
     'providers:test': async ({ connection: draft, apiKey }) => {
       const connection = sanitizeConnection(draft);
-      const provider = providerFor(connection, keyFor(draft, apiKey));
+      const provider = providerFor(connection, keyFor(connection, apiKey));
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TEST_TIMEOUT_MS);
       const started = Date.now();

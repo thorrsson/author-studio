@@ -110,6 +110,8 @@ as a Word document from the **Manuscript** tab.
   Windows' data protection, or your Linux keyring). On Linux without a keyring
   such as GNOME Keyring or KWallet, keys get only basic protection, and
   Settings tells you so.
+- A saved key is only sent to the service or server it was entered for. If you
+  change a server connection to a different address, enter its key again.
 - Your writing is sent only to the AI model you choose. Apple Intelligence and
   local servers keep it on your own computers. Author Studio has no account,
   analytics, or tracking.

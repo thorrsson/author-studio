@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { addressOrigin } from '../src/core/address.js';
 import { startProject } from '../src/core/engine.js';
 import { readJsonFile, writeFileAtomic } from '../src/main/files.js';
 import { createHandlers, registerHandlers, safeFileName, throttle, toFailure } from '../src/main/ipc.js';
@@ -112,6 +113,10 @@ test('sanitizeConnection validates types, addresses, and models', () => {
   assert.equal(apple.model, 'apple-on-device');
   assert.equal(apple.matureThemes, true);
   assert.equal(sanitizeConnection({ type: 'apple', matureThemes: false }).matureThemes, false);
+  assert.notEqual(sanitizeConnection({ type: 'apple', id: '__proto__' }).id, '__proto__');
+  assert.equal(addressOrigin('localhost:11434/v1'), 'http://localhost:11434');
+  assert.equal(addressOrigin('HTTPS://Example.com:443/v1/'), 'https://example.com');
+  assert.equal(addressOrigin('ftp://host'), '');
 });
 
 async function sampleProject(title = 'The Baker') {
@@ -311,6 +316,35 @@ test('IPC requires keys, connections, and safe links', async (t) => {
 
   const check = await h.call('providers:test', { connection: { type: 'compatible', baseUrl: `${h.server.url}/v1`, model: 'local-model' } });
   assert.equal(check.reply, 'Ready');
+});
+
+test('a saved key is only sent with its own connection and server', async (t) => {
+  const h = await harness(t, async (_req, res) => sse(res, openaiEvents(['Ready'])));
+  const other = await startServer({ 'GET /v1/models': (_req, res) => json(res, 200, { object: 'list', data: [{ id: 'other-model', object: 'model' }] }) });
+  t.after(() => other.close());
+  const sent = (server, key) => server.requests.some((entry) => String(entry.headers.authorization ?? '').includes(key));
+
+  const { saved: claude } = await h.call('settings:saveConnection', { connection: { type: 'anthropic', model: 'claude-sonnet-4-5' }, apiKey: KEY });
+  await h.call('providers:listModels', { connection: { id: claude.id, type: 'compatible', baseUrl: other.url } });
+  assert.ok(other.requests.length > 0);
+  assert.ok(!sent(other, KEY), 'a Claude key never goes to a server address');
+  await assert.rejects(h.call('providers:test', { connection: { id: claude.id, type: 'openai', model: 'gpt-5' } }), { code: 'no-key' });
+  await assert.rejects(h.call('settings:saveConnection', { connection: { id: claude.id, type: 'compatible', baseUrl: other.url, model: 'other-model' } }), { code: 'invalid-input' });
+  assert.equal(h.settings.connection(claude.id).type, 'anthropic');
+  assert.equal(h.settings.getKey(claude.id), KEY);
+
+  const token = 'local-token-123';
+  const { saved: local } = await h.call('settings:saveConnection', { connection: { type: 'compatible', baseUrl: `${h.server.url}/v1`, model: 'local-model' }, apiKey: token });
+  await h.call('providers:listModels', { connection: { id: local.id, type: 'compatible', baseUrl: h.server.url } });
+  assert.ok(sent(h.server, token), 'the same server still gets its key');
+  await h.call('providers:listModels', { connection: { id: local.id, type: 'compatible', baseUrl: other.url } });
+  assert.ok(!sent(other, token), 'another server does not');
+
+  await h.call('settings:saveConnection', { connection: { ...local, baseUrl: `${h.server.url}/v1/` } });
+  assert.equal(h.settings.getKey(local.id), token, 'the same origin keeps the key');
+  const { settings } = await h.call('settings:saveConnection', { connection: { ...local, baseUrl: `${other.url}/v1` } });
+  assert.equal(h.settings.getKey(local.id), '', 'moving to another server drops the key');
+  assert.equal(settings.connections.find((item) => item.id === local.id).hasKey, false);
 });
 
 test('registered handlers wrap results in envelopes and reject untrusted senders', async () => {
