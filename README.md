@@ -3,8 +3,11 @@
 An installable, prompt-based fiction-writing plugin for **GitHub Copilot CLI**
 and **Claude Code**, with a portable Agent Skill for other compatible hosts.
 It supports any fiction genre, subgenre, or combination, not just sci-fi/fantasy.
-It uses the model and tools you already have in your host. There is no
+The plugin uses the model and tools you already have in your host. It has no
 standalone CLI, npm installation, API client, MCP server, or credential setup.
+If you don't use one of those hosts, the optional [desktop app](#desktop-app)
+runs the same workflow on macOS, Windows, and Linux with Claude, GPT, a local
+or network AI server, or Apple Intelligence.
 
 Author Studio coordinates five perspectives: Researcher, World Designer,
 Story Builder, Scene Writer, and Editor. They are roles in one conversation,
@@ -13,6 +16,23 @@ optional [automated review](#automated-two-model-review) runs two reviewer
 agents on different models.
 
 ## Install
+
+### Desktop app
+
+For writers who would rather not use a terminal, Author Studio is also an
+installable app for macOS, Windows, and Linux. Download it from the
+[releases page](https://github.com/thorrsson/author-studio/releases), connect
+an AI model, and start writing. It supports:
+
+- Claude (Anthropic) and GPT (OpenAI) with your own API key.
+- Ollama, LM Studio, llama.cpp, and other OpenAI-compatible servers on your
+  computer or local network.
+- Apple Intelligence on Apple silicon Macs running macOS 26 or later.
+
+The app reads the same `skills/` and `agents/` files as the plugin, keeps the
+same state snapshot, and enforces the same review gates. It can export a state
+file for the plugin and import one from it. See [app/README.md](app/README.md)
+for setup, privacy, and development details.
 
 ### GitHub Copilot CLI
 
@@ -82,11 +102,13 @@ For Copilot project skills without the plugin installer, the destination is
 `.claude/skills/author-studio/`. Do not install both the plugin and the copied
 skill in the same host unless you want duplicate entries.
 
-Web chat, Desktop, API, and local-model products are **not automatically plugin
-compatible** just because they can chat. Where custom instructions or file
-attachments are supported, you can manually supply the skill and its resources,
-but that is a prompt-based fallback, not a native integration. No direct OpenAI,
-Gemini, Ollama, LM Studio, or Hugging Face API integration is included.
+Web and desktop chat apps, APIs, and local-model products are **not
+automatically plugin compatible** just because they can chat. Where custom
+instructions or file attachments are supported, you can manually supply the
+skill and its resources, but that is a prompt-based fallback, not a native
+integration. The plugin includes no direct model API integration; to use the
+Anthropic or OpenAI APIs, Ollama, LM Studio, or another OpenAI-compatible
+server directly, use the [desktop app](#desktop-app).
 
 ## Workflow
 
@@ -247,6 +269,9 @@ claude plugin validate .claude-plugin/marketplace.json --strict
 copilot --plugin-dir . plugin list --json
 ```
 
+The desktop app in `app/` has its own unit and end-to-end tests; see
+[app/README.md](app/README.md#development).
+
 Structural tests check packaging, resource links, metadata, and the initial
 state. They do **not** prove model behavior. `tests/scenarios.json` provides
 manual acceptance scenarios to run in a fresh host conversation, including
@@ -255,7 +280,8 @@ skill entry point for each scenario action.
 
 `prompt.md` is the original design input, preserved unchanged. Its standalone
 CLI, npm commands, API examples, and automatic cross-session persistence claims
-are not implemented. The installed skill is authoritative: it resolves the
+are not implemented in the plugin. (The separate desktop app has its own model
+connections and saves projects on disk.) The installed skill is authoritative: it resolves the
 original threshold gap conservatively, defaults to 1,000-3,000-word chapters,
 shows state only on request rather than on every response, and requires an
 explicit next command after approval or rejection.

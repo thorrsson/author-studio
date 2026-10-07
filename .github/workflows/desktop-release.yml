@@ -1,0 +1,319 @@
+name: Desktop release
+
+# Publishes a desktop release: a signed and notarized disk image for macOS,
+# plus the Windows and Linux installers, on a GitHub release.
+#
+# Run it from the Actions tab on the default branch, and it tags that commit
+# desktop-v<version>, from app/package.json, then starts itself again on the
+# tag, which does the build. Pushing a desktop-v* tag does the same. Either
+# way the signing job runs from a tag, which is what the release environment
+# allows.
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tagged: ${{ steps.version.outputs.tagged }}
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the tag matches the app version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            if [[ "${GITHUB_REF_NAME#desktop-v}" != "$version" ]]; then
+              echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
+              exit 1
+            fi
+            # Only release commits that are already on the default branch.
+            # "behind" means the tagged commit is an ancestor of it.
+            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$GITHUB_SHA" --jq .status)"
+            if [[ "$status" != identical && "$status" != behind ]]; then
+              echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on $DEFAULT_BRANCH. Merge it to $DEFAULT_BRANCH first, then tag it there."
+              exit 1
+            fi
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+            echo "Building Author Studio $version"
+          else
+            echo "tagged=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  # A run started by hand on a branch only tags the commit and starts the real
+  # release on that tag. A tag created with GITHUB_TOKEN doesn't trigger push
+  # workflows, but a workflow_dispatch from it does.
+  tag:
+    name: Tag desktop-v${{ needs.version.outputs.version }}
+    needs: version
+    if: needs.version.outputs.tagged == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - name: Tag the commit and start the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: desktop-v${{ needs.version.outputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]]; then
+            echo "::error::Releases are made from $DEFAULT_BRANCH, not $GITHUB_REF_NAME. Run the workflow on $DEFAULT_BRANCH, or on a desktop-v* tag."
+            exit 1
+          fi
+          if existing="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null)"; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft == false' 2>/dev/null | grep -qx true; then
+              echo "::error::$TAG is already released. Raise version in app/package.json to release again."
+              exit 1
+            fi
+            if [[ "$existing" != "$GITHUB_SHA" ]]; then
+              echo "::error::$TAG already points at $existing, not $GITHUB_SHA. Raise version in app/package.json, or delete the tag if it was a mistake."
+              exit 1
+            fi
+            echo "$TAG already points at this commit; starting its release again."
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+            echo "Tagged $GITHUB_SHA as $TAG."
+          fi
+          workflow="${GITHUB_WORKFLOW_REF%@*}"
+          gh workflow run "${workflow##*/}" --repo "$GITHUB_REPOSITORY" --ref "$TAG"
+          echo "### Releasing $TAG" >> "$GITHUB_STEP_SUMMARY"
+          echo "The build runs in [a new run on the tag]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/${workflow##*/}?query=branch%3A$TAG)." >> "$GITHUB_STEP_SUMMARY"
+
+  macos:
+    name: macOS (signed and notarized)
+    needs: version
+    if: needs.version.outputs.tagged == 'true'
+    runs-on: macos-26
+    # The Developer ID private key and the notarization key only exist inside
+    # this environment, which only desktop-v* tags can deploy to. The version
+    # job also refuses a tag whose commit isn't on the default branch, but
+    # that check lives in the tagged commit's own copy of this file, so it
+    # stops mistakes, not someone who can push tags and write the workflow
+    # they point at. Against that, give the environment a required reviewer,
+    # or restrict who can create desktop-v* tags with a tag ruleset.
+    environment: release
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      # Before the certificate is imported, so package install scripts never
+      # run alongside the signing key.
+      - run: npm ci
+
+      # The certificate lives in a throwaway keychain rather than the login one:
+      # a runner's login keychain is unlocked but not visible to codesign's
+      # search list, and a dedicated keychain is deleted with the runner.
+      - name: Import the Developer ID certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_password="$(uuidgen)"
+          certificate="$RUNNER_TEMP/certificate.p12"
+
+          if [[ -z "$CERTIFICATE_P12" || -z "$CERTIFICATE_PASSWORD" ]]; then
+            echo "error: MACOS_CERTIFICATE_P12 and MACOS_CERTIFICATE_PASSWORD must both be set in the release environment" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$certificate"; then
+            echo "error: MACOS_CERTIFICATE_P12 is not valid base64" >&2
+            exit 1
+          fi
+          if openssl pkcs12 -in "$certificate" -passin env:CERTIFICATE_PASSWORD -noout 2>/dev/null; then
+            :
+          elif openssl pkcs12 -legacy -in "$certificate" -passin env:CERTIFICATE_PASSWORD -noout 2>/dev/null; then
+            echo "error: MACOS_CERTIFICATE_P12 uses legacy RC2 encryption, which the runner cannot reliably import" >&2
+            echo "Keychain Access exports use RC2. Set the secrets with app/scripts/macos/push-release-secrets.sh, which repackages it with 3DES" >&2
+            exit 1
+          else
+            echo "error: MACOS_CERTIFICATE_P12 does not decode to a valid PKCS#12 file, or MACOS_CERTIFICATE_PASSWORD is incorrect" >&2
+            echo "Export the identity and private key from Keychain Access as .p12, then set the secrets with app/scripts/macos/push-release-secrets.sh" >&2
+            exit 1
+          fi
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -f pkcs12 -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Without this codesign blocks on a GUI prompt that nobody can answer.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" > /dev/null
+          # Prepended to the existing search list, one keychain path per word.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$certificate"
+
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build, sign, notarize
+        env:
+          AUTHOR_STUDIO_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          AUTHOR_STUDIO_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          AUTHOR_STUDIO_REQUIRE_NOTARIZATION: '1'
+          REQUIRE_APPLE_INTELLIGENCE: '1'
+        run: npm run release:mac
+
+      - name: Discard the signing key
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
+
+      # The signed app runs under the Hardened Runtime, which the source build
+      # tested by desktop.yml does not, so check it still starts.
+      - name: End-to-end test of the signed app
+        env:
+          AUTHOR_STUDIO_EXECUTABLE: dist/mac-universal/Author Studio.app/Contents/MacOS/Author Studio
+        run: npm run test:e2e
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: author-studio-macOS
+          if-no-files-found: error
+          path: |
+            app/dist/*.dmg
+            app/dist/*.dmg.sha256
+
+  # Kept apart from Linux so only the job that can sign runs in the release
+  # environment, where the Windows certificate belongs.
+  windows:
+    name: Windows
+    needs: version
+    if: needs.version.outputs.tagged == 'true'
+    runs-on: windows-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        env:
+          WIN_CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$WIN_CSC_LINK" ]; then
+            echo "::warning::No Windows signing certificate is configured, so the installer is unsigned."
+            unset WIN_CSC_LINK WIN_CSC_KEY_PASSWORD
+          fi
+          npm run dist:win
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: author-studio-Windows
+          if-no-files-found: error
+          path: app/dist/*.exe
+
+  linux:
+    name: Linux
+    needs: version
+    if: needs.version.outputs.tagged == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: author-studio-Linux
+          if-no-files-found: error
+          path: |
+            app/dist/*.AppImage
+            app/dist/*.deb
+
+  release:
+    name: Publish release
+    needs: [version, macos, windows, linux]
+    if: needs.version.outputs.tagged == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      # Uploaded to a draft first and published once every file is there, so
+      # nobody downloads from a half-uploaded release. A re-run replaces the
+      # files of the draft or release already made.
+      - name: Publish the installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          prerelease=()
+          [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Author Studio desktop $VERSION" \
+              --generate-notes \
+              --verify-tag \
+              ${prerelease[@]+"${prerelease[@]}"}
+          fi
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          url="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          echo "Published $url"
+          echo "### Published [Author Studio desktop $VERSION]($url)" >> "$GITHUB_STEP_SUMMARY"

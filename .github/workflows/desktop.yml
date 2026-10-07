@@ -1,0 +1,112 @@
+name: Desktop app
+
+# Tests every change and builds unsigned test copies from main. Signed,
+# notarized releases are built by desktop-release.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'skills/**'
+      - 'agents/**'
+      - '.github/workflows/desktop.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'skills/**'
+      - 'agents/**'
+      - '.github/workflows/desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - name: Unit tests
+        run: npm test
+      - name: End-to-end test
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
+      - name: End-to-end test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Ubuntu 24.04 blocks the user namespaces Electron's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run --auto-servernum npm run test:e2e
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-26
+          - name: Windows
+            os: windows-latest
+          - name: Linux
+            os: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+
+      - name: Build for macOS
+        if: runner.os == 'macOS'
+        env:
+          # Test copies are signed ad-hoc: they open on another Mac only after
+          # Open Anyway.
+          AUTHOR_STUDIO_SIGNING_IDENTITY: '-'
+          REQUIRE_APPLE_INTELLIGENCE: '1'
+        run: npm run dist:mac
+
+      - name: Build for Windows
+        if: runner.os == 'Windows'
+        run: npm run dist:win
+
+      - name: Build for Linux
+        if: runner.os == 'Linux'
+        run: npm run dist:linux
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: author-studio-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            app/dist/*.dmg
+            app/dist/*.exe
+            app/dist/*.AppImage
+            app/dist/*.deb

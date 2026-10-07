@@ -1,0 +1,83 @@
+# Packaging for macOS, Windows, and Linux. See app/README.md for how to build,
+# sign, and release. On macOS, build through scripts/macos/ (npm run dist:mac),
+# which chooses the signing identity and signs and notarizes the disk image.
+appId: io.github.thorrsson.author-studio
+productName: Author Studio
+copyright: Copyright © Author Studio contributors
+artifactName: Author-Studio-${version}-${arch}.${ext}
+# Releases are uploaded by .github/workflows/desktop-release.yml; the app does
+# not auto-update.
+publish: null
+
+directories:
+  output: dist
+  buildResources: build
+
+files:
+  - package.json
+  - src/**/*
+
+# The prompt files the app shares with the Author Studio plugin.
+extraResources:
+  - from: ../skills
+    to: author-studio/skills
+  - from: ../agents
+    to: author-studio/agents
+  - from: ../LICENSE
+    to: LICENSE.txt
+
+mac:
+  category: public.app-category.productivity
+  icon: build/icon.png
+  target:
+    - target: dmg
+      arch: universal
+  minimumSystemVersion: "12.0"
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # scripts/macos/notarize.sh notarizes the signed disk image instead, which
+  # covers the app inside it.
+  notarize: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # The Apple Intelligence helper is already a universal binary.
+  x64ArchFiles: Contents/Resources/bin/author-studio-apple-intelligence
+  extraResources:
+    - from: resources/bin/author-studio-apple-intelligence
+      to: bin/author-studio-apple-intelligence
+  extendInfo:
+    NSLocalNetworkUsageDescription: Author Studio connects to AI model servers on your local network when you add one in Settings.
+
+dmg:
+  title: ${productName}
+  # Signing and stapling change the image after it is built, and the app does
+  # not auto-update, so there is no update blockmap to keep in step.
+  writeUpdateInfo: false
+
+win:
+  icon: build/icon-windows.png
+  target:
+    - target: nsis
+      arch: x64
+
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: Author-Studio-Setup-${version}.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  deleteAppDataOnUninstall: false
+
+linux:
+  icon: build/icons
+  executableName: author-studio
+  syncDesktopName: true
+  category: Office
+  synopsis: A human-directed fiction-writing studio
+  description: Plan, draft, and revise fiction with Claude, OpenAI, or a local AI server, with you approving every change to your story.
+  maintainer: Author Studio contributors <tim@thunter.ca>
+  target:
+    - target: AppImage
+      arch: x64
+    - target: deb
+      arch: x64
