@@ -20,6 +20,7 @@ export function renderHelp() {
     section('You direct, the helpers write',
       h('p', null, 'Start a project with your idea. Then choose one step at a time: research, setting, story plan, writing a chapter, or revising. Each step is done by a specialist helper: the Researcher, World Designer, Story Builder, Scene Writer, or Editor.'),
       h('p', null, 'Every helper rates its own work. Work it is confident about, with no problems, is accepted automatically. Anything else waits for your review, where you can approve it, request changes, continue unfinished text, get a second opinion, or set it aside.'),
+      h('p', null, 'To write several chapters in a row, turn on YOLO mode when you choose Write and pick the last chapter. Author Studio keeps writing until it reaches that chapter, or stops early when a chapter needs your review.'),
       h('p', null, 'Accepted work builds the story bible: characters, places, timeline, and plot threads. Helpers read it before each step so the story stays consistent, and any change to something already established needs your approval.')),
     section('Choosing an AI model',
       h('ul', { class: 'help-list' },

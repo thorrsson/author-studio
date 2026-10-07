@@ -11,6 +11,8 @@ export const state = {
   drafts: new Map(),
   // projectId -> artifactId of the last result to show in the studio.
   lastResult: new Map(),
+  // projectId -> { first, last, chapter, written, stopAfter } while YOLO mode writes chapters.
+  yolo: new Map(),
 };
 
 export const actions = {
