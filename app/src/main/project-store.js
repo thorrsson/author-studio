@@ -99,11 +99,16 @@ export function createProjectStore({ dir, trashItem } = {}) {
       const file = fileFor(id);
       return enqueue(id, async () => {
         summaries.delete(id);
-        try {
-          if (trashItem) await trashItem(file);
-          else await rm(file, { force: true });
-        } catch (error) {
-          if (error.code !== 'ENOENT') await rm(file, { force: true });
+        if (trashItem) {
+          // Never fall back to a permanent delete: the user was told it goes to the trash.
+          try {
+            await trashItem(file);
+          } catch (error) {
+            const exists = await stat(file).then(() => true, (statError) => statError.code !== 'ENOENT');
+            if (exists) throw new AppError('trash-failed', 'The project could not be moved to the trash, so it was not deleted.', { cause: error.message });
+          }
+        } else {
+          await rm(file, { force: true });
         }
         await rm(`${file}.bak`, { force: true });
       });

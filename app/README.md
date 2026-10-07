@@ -289,13 +289,16 @@ and are never printed.
 If the `release` environment doesn't exist, the script creates it, limited to
 `desktop-v*` tags. If it still has GitHub's default settings, the script
 limits it the same way, and it leaves settings you chose alone. Also add
-yourself as a required reviewer, under **Settings → Environments → release**.
-Restricting the workflow to tags isn't a control on its own: anyone who can
-push such a tag also chooses the scripts it points at, and the job runs them
+yourself as a required reviewer, under **Settings → Environments → release**,
+or restrict who can create `desktop-v*` tags with a tag ruleset. The workflow
+refuses a tag whose commit isn't on `main`, but that check runs from the
+tagged commit's own copy of the workflow, so it catches mistakes, not someone
+who can push a tag and choose the scripts it points at; the job runs those
 with the signing and notarization keys in scope. That's why the workflow
 starts a separate run on the tag, rather than signing from `main`. The
 certificate is imported into a throwaway keychain that is deleted at the end
 of the job.
 
 Windows signing is optional: set `WINDOWS_CERTIFICATE` (a base64 `.pfx`) and
-`WINDOWS_CERTIFICATE_PASSWORD` as repository secrets to sign the installer.
+`WINDOWS_CERTIFICATE_PASSWORD` as secrets of the `release` environment to sign
+the installer. The Windows build runs in that environment, apart from Linux.

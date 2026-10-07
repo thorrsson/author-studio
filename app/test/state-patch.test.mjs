@@ -146,6 +146,10 @@ test('detects overwrites of accepted canon but allows refinements', () => {
     characters: [{ name: 'MARA', role: 'thief', arc_stage: 'new stage' }],
   });
   assert.deepEqual(changes.map((change) => change.path), ['lore.tech_level', 'plot.act_beats', 'characters.Mara.role']);
+  for (const contradiction of ['Not 1920s rural Ireland', '1920s rural Irelandish', 'Set in 1920s rural Ireland']) {
+    assert.deepEqual(detectCanonChanges(state, { lore: { tech_level: contradiction } }).map((change) => change.path), ['lore.tech_level'], contradiction);
+  }
+  assert.deepEqual(detectCanonChanges(state, { characters: [{ name: 'Mara', voice_notes: 'Dry wit; clipped' }] }), []);
 });
 
 test('merges and describes patches', () => {

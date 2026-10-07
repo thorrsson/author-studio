@@ -42,6 +42,17 @@ test('ignores assessment-like headings inside the artifact and uses the last rea
   assert.equal(parseAssessment(assessmentText).confidence, 0.9);
 });
 
+test('keeps a generic Assessment section in the story unless an assessment follows it', () => {
+  const story = '# Chapter\n\n## Assessment\nThe inspector weighs the evidence.\n\nShe decides.';
+  const trailing = splitResponse(`${story}\n\n\`\`\`json\n{"confidence": 0.6}\n\`\`\``);
+  assert.equal(trailing.artifact, story);
+  assert.equal(parseAssessment(trailing.assessmentText).confidence, 0.6);
+
+  const generic = splitResponse('Story.\n\n## Assessment\n```json\n{"confidence": 0.7}\n```');
+  assert.equal(generic.artifact, 'Story.');
+  assert.equal(generic.markerFound, true);
+});
+
 test('falls back to a trailing JSON block or object without the marker', () => {
   const fenced = 'Story text.\n\n```json\n{"confidence": 0.7, "flags": []}\n```';
   assert.equal(splitResponse(fenced).artifact, 'Story text.');

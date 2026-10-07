@@ -96,19 +96,8 @@ async function main() {
     },
   });
 
-  const app = await electron.launch({
-    executablePath: packaged ?? electronPath,
-    args: packaged ? [] : [appDir],
-    // Let the app's own theme setting drive prefers-color-scheme.
-    colorScheme: null,
-    env: {
-      ...process.env,
-      AUTHOR_STUDIO_USER_DATA: userData,
-      AUTHOR_STUDIO_KEY_STORAGE: 'memory',
-      ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
-    },
-  });
   const problems = [];
+  let app;
   let page;
   const shot = async (name) => {
     if (!shotsDir) return;
@@ -123,6 +112,18 @@ async function main() {
   const sidebar = () => page.locator('#sidebar');
 
   try {
+    app = await electron.launch({
+      executablePath: packaged ?? electronPath,
+      args: packaged ? [] : [appDir],
+      // Let the app's own theme setting drive prefers-color-scheme.
+      colorScheme: null,
+      env: {
+        ...process.env,
+        AUTHOR_STUDIO_USER_DATA: userData,
+        AUTHOR_STUDIO_KEY_STORAGE: 'memory',
+        ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
+      },
+    });
     page = await app.firstWindow();
     page.on('pageerror', (error) => problems.push(`Page error: ${error.message}`));
     page.on('console', (message) => {
@@ -242,7 +243,7 @@ async function main() {
     if (problems.length) console.error(problems.join('\n'));
     throw error;
   } finally {
-    await app.close().catch(() => {});
+    await app?.close().catch(() => {});
     await server.close();
     await rm(userData, { recursive: true, force: true }).catch(() => {});
   }

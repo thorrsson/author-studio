@@ -96,11 +96,22 @@ function findTrailingJson(text) {
   return undefined;
 }
 
+// A generic "Assessment" heading only counts when an assessment follows it directly,
+// so a story section with that title is not cut off.
+function startsAssessment(text) {
+  const first = (/^\s*([^\n]*)/.exec(text)?.[1] ?? '').trim();
+  if (first.startsWith('```') || first.startsWith('{')) return true;
+  const field = FIELD_LINE.exec(first);
+  return Boolean(field && FIELD_NAMES.has(field[1].trim().toLowerCase()));
+}
+
 export function splitResponse(raw) {
   const text = stripThinking(raw);
   let marker = null;
   for (const match of text.matchAll(MARKER_LINE)) {
-    if (hasConfidenceJson(text.slice(match.index + match[0].length))) marker = match;
+    const rest = text.slice(match.index + match[0].length);
+    if (!hasConfidenceJson(rest)) continue;
+    if (/author[ \t-]*studio/i.test(match[0]) || startsAssessment(rest)) marker = match;
   }
   if (marker) {
     return {

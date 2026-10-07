@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -154,6 +154,21 @@ test('project store saves, lists, recovers from .bak, and removes', async (t) =>
   assert.deepEqual(await store.list(), []);
   await assert.rejects(store.load(project.id), { code: 'project-missing' });
   await assert.rejects(store.load('../../etc/passwd'), { code: 'invalid-input' });
+});
+
+test('project store keeps the project when the trash fails', async (t) => {
+  const dir = await tempDir(t);
+  const store = createProjectStore({ dir, trashItem: async () => { throw new Error('Trash unavailable'); } });
+  const project = await sampleProject();
+  await store.save(project);
+  await store.save({ ...project });
+  await assert.rejects(store.remove(project.id), { code: 'trash-failed' });
+  assert.equal((await store.load(project.id)).project.id, project.id);
+  await stat(path.join(dir, `${project.id}.json.bak`));
+
+  const gone = createProjectStore({ dir, trashItem: async () => { throw new Error('No such file'); } });
+  await rm(path.join(dir, `${project.id}.json`));
+  await gone.remove(project.id);
 });
 
 test('helpers: safe file names, throttling, and failure envelopes', async () => {

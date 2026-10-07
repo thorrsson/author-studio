@@ -151,7 +151,8 @@ export function mergePatches(first = {}, second = {}) {
 const isRefinement = (current, next) => {
   const a = normKey(current);
   const b = normKey(next);
-  return a === b || b.includes(a);
+  // Only appended detail counts; text placed before it (e.g. "Not ...") could reverse it.
+  return a === b || (b.startsWith(a) && !/[\p{L}\p{N}]/u.test(b[a.length]));
 };
 
 const preview = (text) => {

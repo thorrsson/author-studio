@@ -182,13 +182,15 @@ function createWindow() {
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.webContents.on('context-menu', (_event, params) => showContextMenu(mainWindow.webContents, params));
+  let closeConfirmed = false;
   mainWindow.on('close', async (event) => {
-    if (quitting || !handlers?.busyCount()) return;
+    if (quitting || closeConfirmed || !handlers?.busyCount()) return;
     event.preventDefault();
-    if (await confirmStop(mainWindow)) {
+    const window = mainWindow;
+    if (await confirmStop(window)) {
       handlers.cancelAll();
-      quitting = true;
-      mainWindow.close();
+      closeConfirmed = true;
+      if (!window.isDestroyed()) window.close();
     }
   });
   mainWindow.on('closed', () => {
