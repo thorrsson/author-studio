@@ -49,7 +49,19 @@ if [[ -n "${SKIP_REASON}" ]]; then
          outright."
 else
     "${MACOS_SCRIPTS}/notarize.sh" "${DMG}"
+    # The image's notarization also covers the identical signed app in dist/.
+    # Staple that app before creating the updater ZIP, for offline Gatekeeper.
+    xcrun stapler staple "${APP}"
+    xcrun stapler validate "${APP}"
+    spctl --assess --type execute --verbose=2 "${APP}"
 fi
+
+# Rebuild the updater archive after stapling; builder's ZIP and its metadata
+# describe the unstapled app. Mac updates use full downloads, not blockmaps.
+ZIP="${DIST}/Author-Studio-${VERSION}-universal.zip"
+rm -f "${ZIP}" "${ZIP}.blockmap"
+ditto -c -k --sequesterRsrc --keepParent "${APP}" "${ZIP}"
+node scripts/macos/write-update-info.mjs
 
 # A checksum published beside the download lets anyone confirm they got the same
 # bytes, which is the one integrity check that does not depend on Apple. It is

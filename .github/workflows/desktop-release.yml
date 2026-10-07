@@ -209,6 +209,8 @@ jobs:
           path: |
             app/dist/*.dmg
             app/dist/*.dmg.sha256
+            app/dist/*.zip
+            app/dist/latest-mac.yml
 
   # Kept apart from Linux so only the job that can sign runs in the release
   # environment, where the Windows certificate belongs.
@@ -248,7 +250,10 @@ jobs:
         with:
           name: author-studio-Windows
           if-no-files-found: error
-          path: app/dist/*.exe
+          path: |
+            app/dist/*.exe
+            app/dist/*.exe.blockmap
+            app/dist/latest.yml
 
   linux:
     name: Linux
@@ -278,6 +283,7 @@ jobs:
           path: |
             app/dist/*.AppImage
             app/dist/*.deb
+            app/dist/latest-linux.yml
 
   release:
     name: Publish release
@@ -300,6 +306,10 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           set -euo pipefail
+          # Refuse to publish installers without the feeds used by installed apps.
+          for feed in latest-mac.yml latest.yml latest-linux.yml; do
+            [[ -s "artifacts/$feed" ]] || { echo "::error::Missing $feed"; exit 1; }
+          done
           prerelease=()
           [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then

@@ -16,12 +16,14 @@ import {
 } from 'electron';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import electronUpdater from 'electron-updater';
 import { loadResources } from '../core/resources.js';
 import { paperForCountry } from './docx.js';
 import { createHandlers, registerHandlers } from './ipc.js';
 import { appleHelperPath, resourcesRoot, SRC_ROOT } from './paths.js';
 import { createProjectStore } from './project-store.js';
 import { createSettingsStore } from './settings-store.js';
+import { createUpdates } from './updates.js';
 
 const ORIGIN = 'app://author-studio';
 const START_URL = `${ORIGIN}/renderer/index.html`;
@@ -61,6 +63,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow = null;
 let handlers = null;
 let quitting = false;
+let updates = null;
 
 function sendCommand(command) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -201,12 +204,20 @@ function createWindow() {
 
 function buildMenu(dataDir) {
   const isMac = process.platform === 'darwin';
+  const updatesItem = {
+    label: 'Check for Updates…',
+    click: () => updates.check(true).catch((error) => {
+      console.error('Update check failed:', error);
+      dialog.showErrorBox('Author Studio could not update', error.message);
+    }),
+  };
   const settingsItem = { label: isMac ? 'Settings…' : 'Settings', accelerator: 'CmdOrCtrl+,', click: () => sendCommand('settings') };
   const template = [
     ...(isMac ? [{
       label: app.name,
       submenu: [
         { role: 'about' },
+        updatesItem,
         { type: 'separator' },
         settingsItem,
         { type: 'separator' },
@@ -247,6 +258,7 @@ function buildMenu(dataDir) {
       role: 'help',
       submenu: [
         { label: 'Author Studio Help', accelerator: isMac ? 'Cmd+?' : 'F1', click: () => sendCommand('help') },
+        ...(!isMac ? [updatesItem] : []),
         { label: 'Show Projects Folder', click: () => shell.openPath(dataDir) },
         { label: 'Author Studio on GitHub', click: () => shell.openExternal(HOMEPAGE) },
       ],
@@ -304,8 +316,17 @@ async function start() {
     copyright: 'MIT License',
     website: HOMEPAGE,
   });
+  updates = createUpdates({
+    updater: electronUpdater.autoUpdater,
+    dialog,
+    getWindow: () => mainWindow,
+    busyCount: () => handlers.busyCount(),
+    isPackaged: app.isPackaged,
+  });
   buildMenu(projectsDir);
   createWindow();
+  updates.start();
+  app.once('will-quit', () => updates.dispose());
 }
 
 if (!app.requestSingleInstanceLock()) {

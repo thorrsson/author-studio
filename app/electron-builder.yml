@@ -5,9 +5,12 @@ appId: io.github.thorrsson.author-studio
 productName: Author Studio
 copyright: Copyright © Author Studio contributors
 artifactName: Author-Studio-${version}-${arch}.${ext}
-# Releases are uploaded by .github/workflows/desktop-release.yml; the app does
-# not auto-update.
-publish: null
+# CI uploads installers and updater metadata together before publishing.
+publish:
+  provider: github
+  owner: thorrsson
+  repo: author-studio
+  channel: latest
 
 directories:
   output: dist
@@ -32,6 +35,8 @@ mac:
   target:
     - target: dmg
       arch: universal
+    - target: zip
+      arch: universal
   minimumSystemVersion: "12.0"
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -50,8 +55,7 @@ mac:
 
 dmg:
   title: ${productName}
-  # Signing and stapling change the image after it is built, and the app does
-  # not auto-update, so there is no update blockmap to keep in step.
+  # Mac updates use the ZIP, not the disk image modified by signing/stapling.
   writeUpdateInfo: false
 
 win:

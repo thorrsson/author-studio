@@ -39,6 +39,24 @@ Two kinds of download still show a warning the first time they open:
   **System Settings → Privacy & Security**, scroll down, click **Open Anyway**
   next to the Author Studio message, and confirm. You only need to do this once.
 
+## Updates
+
+Installed Mac, Windows, and Linux AppImage builds check GitHub Releases for a
+new stable version shortly after launch and every four hours while open.
+Author Studio asks before downloading and again before restarting to install.
+An update never installs just because you quit. If a writing step is running,
+finish it first, then choose **Check for Updates** to install the downloaded
+update.
+
+On Mac, **Check for Updates** is in the **Author Studio** menu. On Windows
+and Linux it is in **Help**. Linux `.deb` installations and source builds do
+not auto-update; download a newer package from the releases page instead.
+Pre-releases are not offered automatically.
+
+The first version with this updater must be installed manually; older
+versions cannot update themselves. Update checks contact GitHub, not your AI
+provider, and do not send project text or API keys.
+
 ## Choosing an AI model
 
 The first screen asks you to connect a model. You can change this later in
@@ -145,7 +163,9 @@ npm run test:e2e             # end-to-end test against a scripted model server
 `SMOKE_SCREENSHOTS=<folder> npm run test:e2e` saves a screenshot of each screen.
 `AUTHOR_STUDIO_EXECUTABLE=<path to app binary> npm run test:e2e` runs the same
 test against a packaged build. `AUTHOR_STUDIO_USER_DATA=<folder>` runs the app
-with a separate data folder.
+with a separate data folder. The smoke test disables automatic update checks
+with `AUTHOR_STUDIO_DISABLE_UPDATE_CHECKS=1`; this leaves manual checks
+available.
 
 ### Layout
 
@@ -162,7 +182,7 @@ with a separate data folder.
 ### Packaging
 
 ```sh
-npm run dist:mac      # universal .dmg (run on macOS)
+npm run dist:mac      # universal .dmg and update .zip (run on macOS)
 npm run release:mac   # the same, tested, notarized, and checksummed
 npm run dist:win      # .exe installer (run on Windows)
 npm run dist:linux    # .AppImage and .deb (run on Linux)
@@ -180,7 +200,7 @@ a warning. Three scripts in `scripts/macos/` do the work:
 | --- | --- |
 | `build.sh` (`npm run dist:mac`) | Builds the Apple Intelligence helper and the universal app, signs every binary with the Hardened Runtime and a secure timestamp, then signs the disk image. |
 | `notarize.sh [dmg]` | Submits the image to Apple, waits for the verdict, staples the ticket, and checks the image and the app inside it with Gatekeeper. |
-| `release.sh` (`npm run release:mac`) | Unit tests, then `build.sh`, then `notarize.sh`, then a SHA-256 checksum beside the image. |
+| `release.sh` (`npm run release:mac`) | Unit tests, then `build.sh`, then `notarize.sh`; staples the app, rebuilds the updater ZIP and its feed, and writes a SHA-256 checksum beside the image. |
 
 Without a Developer ID, the app is signed ad hoc and notarization is skipped,
 with a warning: the build runs on the Mac that made it, and on others only
@@ -230,7 +250,11 @@ a release. To make one, raise `version` in `package.json` on `main`, then open
 **Actions → Desktop release → Run workflow** and run it on `main`. It tags that
 commit `desktop-v<version>` and starts a second run on the tag. That run
 builds, signs, and notarizes the Mac image, tests the signed app, builds the
-Windows and Linux installers, and publishes them all as a GitHub release. A
+Windows and Linux installers, and publishes them all as a GitHub release,
+alongside `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, and Windows
+blockmaps. Mac updates use a ZIP containing the signed, stapled app; its
+SHA-512 and size are computed after stapling. Mac differential downloads are
+disabled because rebuilding that ZIP invalidates builder's blockmap. A
 version with a suffix, such as `1.1.0-beta.1`, is published as a pre-release.
 
 Pushing the tag yourself does the same thing:

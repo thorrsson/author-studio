@@ -121,6 +121,7 @@ async function main() {
         ...process.env,
         AUTHOR_STUDIO_USER_DATA: userData,
         AUTHOR_STUDIO_KEY_STORAGE: 'memory',
+        AUTHOR_STUDIO_DISABLE_UPDATE_CHECKS: '1',
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
       },
     });
