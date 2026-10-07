@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import { applyPatch, describePatch, detectCanonChanges, mergePatches, normalizePatch } from '../src/core/patch.js';
-import { ROLE_NAMES, extractSection } from '../src/core/resources.js';
+import { RESOURCE_FILES, ROLE_NAMES, extractSection, loadResources } from '../src/core/resources.js';
 import { isInitialized, migrateSnapshot, validateSnapshot } from '../src/core/state.js';
-import { resources, template } from './helpers.mjs';
+import { repoRoot, resources, template } from './helpers.mjs';
 
 test('loads the shared skill resources', () => {
   assert.deepEqual(Object.keys(resources.workers.roles), [...ROLE_NAMES]);
@@ -16,6 +19,20 @@ test('loads the shared skill resources', () => {
   assert.doesNotMatch(resources.reviewerPrompt, /^---/);
   assert.match(resources.consolidationGuide, /AUTOMATED REVIEW/);
   assert.equal(extractSection('## A\none\n## B\ntwo', 'B'), 'two');
+});
+
+test('loads the same resources from a checkout with Windows line endings', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'author-studio-crlf-'));
+  try {
+    for (const relative of Object.values(RESOURCE_FILES)) {
+      const text = (await readFile(path.join(repoRoot, relative), 'utf8')).replace(/\r?\n/g, '\r\n');
+      await mkdir(path.dirname(path.join(dir, relative)), { recursive: true });
+      await writeFile(path.join(dir, relative), text);
+    }
+    assert.deepEqual(await loadResources(dir), resources);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('the template is a valid, uninitialized snapshot', () => {

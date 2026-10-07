@@ -19,7 +19,8 @@ export const ROLE_NAMES = Object.freeze([
 ]);
 
 export async function loadResources(baseDir) {
-  const read = (relative) => readFile(path.join(baseDir, relative), 'utf8');
+  // A Windows checkout can turn these into CRLF files; the parsers expect LF.
+  const read = async (relative) => (await readFile(path.join(baseDir, relative), 'utf8')).replace(/\r\n?/g, '\n');
   const [template, workers, reviewer, review] = await Promise.all([
     read(RESOURCE_FILES.template),
     read(RESOURCE_FILES.workers),
