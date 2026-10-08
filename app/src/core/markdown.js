@@ -275,25 +275,34 @@ export function inlineText(nodes) {
   }).join('');
 }
 
-function listLines(block, prefix) {
+function exportInlineText(nodes) {
+  return nodes.map((node) => {
+    if (node.type === 'text' || node.type === 'code') return node.text;
+    if (node.type === 'break') return '\n';
+    const label = exportInlineText(node.children ?? []);
+    return node.type === 'link' && node.href ? `${label} (${node.href})` : label;
+  }).join('');
+}
+
+function listLines(block, prefix, inline = inlineText) {
   const lines = [];
   block.items.forEach((item, position) => {
     const marker = block.ordered ? `${(block.start ?? 1) + position}.` : '•';
-    lines.push(`${prefix}${marker} ${item.lines.map(inlineText).join(' ')}`);
-    for (const child of item.children) lines.push(...listLines(child, `${prefix}    `));
+    lines.push(`${prefix}${marker} ${item.lines.map(inline).join(' ')}`);
+    for (const child of item.children) lines.push(...listLines(child, `${prefix}    `, inline));
   });
   return lines;
 }
 
-function textBlocks(blocks, prefix = '') {
+function textBlocks(blocks, prefix = '', inline = inlineText) {
   const out = [];
   for (const block of blocks) {
     switch (block.type) {
       case 'heading':
-        out.push(`${prefix}${inlineText(block.inline)}`);
+        out.push(`${prefix}${inline(block.inline)}`);
         break;
       case 'paragraph':
-        out.push(block.lines.map((line) => `${prefix}${inlineText(line)}`).join('\n'));
+        out.push(block.lines.map((line) => `${prefix}${inline(line)}`).join('\n'));
         break;
       case 'rule':
         out.push(`${prefix}* * *`);
@@ -302,13 +311,13 @@ function textBlocks(blocks, prefix = '') {
         out.push(block.text.split('\n').map((line) => `${prefix}${line}`).join('\n'));
         break;
       case 'quote':
-        out.push(...textBlocks(block.blocks, `${prefix}    `));
+        out.push(...textBlocks(block.blocks, `${prefix}    `, inline));
         break;
       case 'list':
-        out.push(listLines(block, prefix).join('\n'));
+        out.push(listLines(block, prefix, inline).join('\n'));
         break;
       case 'table':
-        out.push([block.header, ...block.rows].map((row) => `${prefix}${row.map(inlineText).join('\t')}`).join('\n'));
+        out.push([block.header, ...block.rows].map((row) => `${prefix}${row.map(inline).join('\t')}`).join('\n'));
         break;
       default:
         break;
@@ -318,6 +327,6 @@ function textBlocks(blocks, prefix = '') {
 }
 
 // Plain text with paragraphs separated by blank lines, for .txt exports.
-export function markdownToText(source) {
-  return `${textBlocks(parseMarkdown(source)).join('\n\n')}\n`;
+export function markdownToText(source, { includeLinks = false } = {}) {
+  return `${textBlocks(parseMarkdown(source), '', includeLinks ? exportInlineText : inlineText).join('\n\n')}\n`;
 }

@@ -1,6 +1,7 @@
 // The project workspace: write (steps and reviews), manuscript, story bible,
 // idea and brief, and history.
 import { ARTIFACT_STATUS_LABELS, artifactLabel, STATUS_LABELS, typeLabel } from '../../core/labels.js';
+import { canExport, EXPORT_TARGETS } from '../../core/exports.js';
 import { describePatch, toText } from '../../core/patch.js';
 import { ACCEPT_THRESHOLD } from '../../core/state.js';
 import { call } from '../api.js';
@@ -243,6 +244,17 @@ function bulletList(title, items, className) {
   return h('div', { class: ['detail-block', className] }, h('h3', null, title), h('ul', null, items.map((item) => h('li', null, item))));
 }
 
+function continuityNotesPanel(artifact) {
+  const notes = artifact.continuityNotes && artifact.continuityNotes !== artifact.separatedNotes
+    ? artifact.continuityNotes
+    : null;
+  if (!notes) return null;
+  return h('details', { class: 'detail-block' },
+    h('summary', null, 'Separated planning notes'),
+    h('p', { class: 'muted small' }, 'Preserved outside the manuscript. These notes are not automatically canon; only the structured story bible updates are applied on approval.'),
+    renderMarkdown(notes));
+}
+
 function artifactMeta(artifact) {
   const parts = [artifact.worker === 'Author' ? 'Written by you' : artifact.worker];
   if (artifact.model) parts.push(artifact.model);
@@ -270,6 +282,7 @@ export function openArtifact(project, artifactId) {
       artifact.notes ? h('p', { class: 'muted small' }, `Your notes: ${artifact.notes}`) : null,
       artifact.separatedNotes ? h('div', { class: 'detail-block' }, h('h3', null, 'Separated planning notes'), renderMarkdown(artifact.separatedNotes)) : null,
       h('div', { class: 'artifact-body' }, renderMarkdown(artifact.content)),
+      continuityNotesPanel(artifact),
     ],
   });
   modal.setActions([
@@ -442,22 +455,53 @@ function openRequestReview(project) {
 }
 
 async function exportManuscript(project, format, button) {
-  await withBusy(button, async () => {
+  return withBusy(button, async () => {
     const result = await call('files:exportManuscript', { projectId: project.id, format });
     if (!result.cancelled) toast(`Saved ${result.name}.`, { kind: 'success' });
+    return result;
   });
 }
 
-export function openExportMenu(project) {
+export function openExportMenu(project, initialTarget) {
+  const tabTargets = { manuscript: 'manuscript', bible: 'bible', brief: 'brief' };
+  let target = initialTarget ?? tabTargets[state.view.tab] ?? 'planning';
+  if (!canExport(project, target)) target = Object.keys(EXPORT_TARGETS).find((key) => canExport(project, key)) ?? 'planning';
+  const description = h('p', { class: 'muted' }, EXPORT_TARGETS[target].description);
+  const buttons = [
+    ['docx', 'Word document (.docx)'],
+    ['md', 'Markdown (.md)'],
+    ['txt', 'Plain text (.txt)'],
+  ].map(([format, label], index) => h('button', {
+    class: ['btn', index === 0 && 'primary'],
+    type: 'button',
+    disabled: !canExport(project, target),
+    onclick: (event) => withBusy(event.currentTarget, async () => {
+      const result = await call('files:exportDocument', { projectId: project.id, target, format });
+      if (!result.cancelled) {
+        toast(`Saved ${result.name}.`, { kind: 'success' });
+        modal.close();
+      }
+    }),
+  }, label));
+  const select = h('select', {
+    id: 'export-target',
+    value: target,
+    onchange: (event) => {
+      target = event.target.value;
+      description.textContent = EXPORT_TARGETS[target].description;
+      buttons.forEach((button) => { button.disabled = !canExport(project, target); });
+    },
+  }, Object.entries(EXPORT_TARGETS).map(([key, option]) => h('option', {
+    value: key, disabled: !canExport(project, key),
+  }, option.label)));
   const modal = openModal({
-    title: 'Export manuscript',
+    title: 'Export project content',
     size: 'small',
     content: [
-      h('p', { class: 'muted' }, 'Exports include every accepted chapter in order.'),
-      h('div', { class: 'stack' },
-        h('button', { class: 'btn primary', type: 'button', onclick: (event) => exportManuscript(project, 'docx', event.currentTarget).then(() => modal.close()) }, 'Word document (.docx)'),
-        h('button', { class: 'btn', type: 'button', onclick: (event) => exportManuscript(project, 'md', event.currentTarget).then(() => modal.close()) }, 'Markdown (.md)'),
-        h('button', { class: 'btn', type: 'button', onclick: (event) => exportManuscript(project, 'txt', event.currentTarget).then(() => modal.close()) }, 'Plain text (.txt)')),
+      h('div', { class: 'field' }, h('label', { for: 'export-target' }, 'Content to export'), select),
+      description,
+      h('p', { class: 'hint' }, 'Only saved, accepted content is included. Pending, rejected, and superseded versions are excluded.'),
+      h('div', { class: 'stack' }, buttons),
     ],
   });
 }
@@ -584,6 +628,7 @@ function reviewCard(project) {
     bulletList('Problems this revision did not fix', artifact.unresolved),
     bulletList('If you approve, the story bible gains', patchLines, 'patch'),
     artifact.separatedNotes ? h('div', { class: 'detail-block' }, h('h3', null, 'Separated planning notes · review before accepting'), renderMarkdown(artifact.separatedNotes)) : null,
+    continuityNotesPanel(artifact),
     artifact.complete === false ? h('div', { class: 'callout callout-warning' }, 'This text is unfinished. Continue writing to extend it, or approve it as it is and continue later.') : null,
     h('div', { class: 'review-text' }, renderMarkdown(artifact.content)),
     reviews.length ? h('div', { class: 'detail-block' },
@@ -763,6 +808,7 @@ function lastResultPanel(project) {
       artifact.worker === 'Author' ? null : confidenceMeter(artifact)),
     artifact.type === 'chapter' && artifact.complete === false ? h('div', { class: 'callout callout-warning' }, 'This text is unfinished. You can continue it at any time.') : null,
     h('div', { class: 'result-text' }, renderMarkdown(artifact.content)),
+    continuityNotesPanel(artifact),
     h('div', { class: 'button-row' },
       h('button', { class: 'btn', type: 'button', onclick: () => openArtifact(project, artifact.id) }, 'Open'),
       h('button', { class: 'btn', type: 'button', disabled: state.runs.has(project.id), onclick: () => prepareEdit(project, artifact) }, 'Revise…'),
@@ -808,7 +854,7 @@ function manuscriptTab(project) {
       h('div', null, h('h2', null, 'Manuscript'), h('p', { class: 'muted' }, `${plural(chapters.length, 'chapter')} · ${plural(manuscriptWords(project), 'word')}`)),
       h('div', { class: 'button-row' },
         h('button', { class: 'btn', type: 'button', disabled: !chapters.length, onclick: (event) => exportManuscript(project, 'docx', event.currentTarget) }, 'Export for Word'),
-        h('button', { class: 'btn', type: 'button', disabled: !chapters.length, onclick: () => openExportMenu(project) }, 'Other formats…'))),
+        h('button', { class: 'btn', type: 'button', disabled: !chapters.length, onclick: () => openExportMenu(project, 'manuscript') }, 'Other formats…'))),
     chapters.length
       ? h('article', { class: 'manuscript' },
         h('h1', { class: 'manuscript-title' }, project.state.project.title || 'Untitled'),
@@ -857,9 +903,13 @@ function chapterUpdatesSection(updates) {
 
 function bibleTab(project) {
   const { lore, plot, characters } = project.state;
+  const chapterUpdates = acceptedChapters(project).filter((item) => item.continuityNotes || describePatch(item.proposedChanges).length);
+  const snapshotUpdates = project.state.chapter_updates ?? [];
+  const legacyChapterUpdates = chapterUpdates.filter((item) => !snapshotUpdates.some((update) => update.artifact_id === item.id));
   const documents = accepted(project).filter((item) => ['research', 'world', 'plot'].includes(item.type)).sort((a, b) => String(a.acceptedAt).localeCompare(String(b.acceptedAt)));
   const empty = !characters.length && !lore.tech_level && !lore.magic_system && !lore.key_factions.length && !lore.timeline_log.length
-    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length && !project.state.chapter_updates?.length;
+    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length
+    && !snapshotUpdates.length && !legacyChapterUpdates.length;
   if (empty) {
     return h('div', { class: 'empty-state' },
       h('h2', null, 'The story bible is empty'),
@@ -867,7 +917,9 @@ function bibleTab(project) {
   }
   const characterKnown = ['name', 'role', 'arc_stage', 'voice_notes'];
   return [
-    h('div', { class: 'section-head' }, h('div', null, h('h2', null, 'Story bible'), h('p', { class: 'muted' }, 'What you have established so far. It updates when you accept work.'))),
+    h('div', { class: 'section-head' },
+      h('div', null, h('h2', null, 'Story bible'), h('p', { class: 'muted' }, 'What you have established so far. It updates when you accept work.')),
+      h('button', { class: 'btn', type: 'button', disabled: !canExport(project, 'bible'), onclick: () => openExportMenu(project, 'bible') }, 'Export story bible…')),
     characters.length ? bibleSection('Characters', null, h('div', { class: 'character-grid' }, characters.map((character) => h('article', { class: 'character-card' },
       h('h4', null, character.name),
       character.role ? h('p', null, h('span', { class: 'label' }, 'Role '), character.role) : null,
@@ -881,7 +933,12 @@ function bibleTab(project) {
     plot.act_beats.length ? bibleSection('Story beats', null, textList(plot.act_beats, true)) : null,
     plot.loose_threads.length ? bibleSection('Open threads', 'Questions and promises the story still needs to pay off.', textList(plot.loose_threads)) : null,
     plot.twist_map.length ? bibleSection('Twists and reveals', null, textList(plot.twist_map)) : null,
-    chapterUpdatesSection(project.state.chapter_updates ?? []),
+    chapterUpdatesSection(snapshotUpdates),
+    legacyChapterUpdates.length ? bibleSection('Chapter updates', 'Updates submitted with each accepted chapter, including thread resolutions. Earlier versions remain in History.',
+      legacyChapterUpdates.map((item) => h('details', { class: 'detail-block' },
+        h('summary', null, artifactLabel(item)),
+        bulletList('Submitted story bible updates', describePatch(item.proposedChanges)),
+        continuityNotesPanel(item)))) : null,
     documents.length ? bibleSection('Planning documents', null, h('ul', { class: 'plain-list' }, documents.map((item) => h('li', null, h('button', { class: 'link-button', type: 'button', onclick: () => openArtifact(project, item.id) }, artifactLabel(item)), h('span', { class: 'muted small' }, ` · ${plural(item.words ?? 0, 'word')}`))))) : null,
   ];
 }
@@ -899,7 +956,9 @@ function briefTab(project) {
     ...props,
   });
   return [
-    h('div', { class: 'section-head' }, h('div', null, h('h2', null, 'Idea and brief'), h('p', { class: 'muted' }, 'Every helper reads these before each step. Changes apply to future steps, not to work you have already accepted.'))),
+    h('div', { class: 'section-head' },
+      h('div', null, h('h2', null, 'Idea and brief'), h('p', { class: 'muted' }, 'Every helper reads these before each step. Changes apply to future steps, not to work you have already accepted.')),
+      h('button', { class: 'btn', type: 'button', disabled: !canExport(project, 'brief'), onclick: () => openExportMenu(project, 'brief') }, 'Export idea and brief…')),
     h('div', { class: 'card form-card' },
       h('div', { class: 'two-col' },
         h('div', { class: 'field' }, h('label', { for: 'brief-title' }, 'Title'), h('input', input('title', info.title, { type: 'text', maxlength: '120' }))),
@@ -983,8 +1042,11 @@ export function renderWorkspace() {
   const status = project.gate ? STATUS_LABELS.review : STATUS_LABELS[info.status] ?? info.status;
   return h('div', { class: 'page workspace' },
     h('header', { class: 'workspace-header' },
-      h('h1', null, info.title || 'Untitled'),
-      h('p', { class: 'muted' }, [info.genre, status, plural(manuscriptWords(project), 'word')].filter(Boolean).join(' · ')),
+      h('div', { class: 'section-head' },
+        h('div', null,
+          h('h1', null, info.title || 'Untitled'),
+          h('p', { class: 'muted' }, [info.genre, status, plural(manuscriptWords(project), 'word')].filter(Boolean).join(' · '))),
+        h('button', { class: 'btn', type: 'button', onclick: () => openExportMenu(project) }, 'Export…')),
       h('nav', { class: 'tabs', role: 'tablist', 'aria-label': 'Project sections' }, TABS.map(([key, label]) => h('button', {
         type: 'button',
         role: 'tab',

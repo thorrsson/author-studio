@@ -237,7 +237,7 @@ function handleMenuCommand(command) {
       break;
     case 'export':
       if (state.view.name === 'project' && state.project) openExportMenu(state.project);
-      else toast('Open a project to export its manuscript.');
+      else toast('Open a project to export its content.');
       break;
     case 'settings':
       navigate({ name: 'settings' });

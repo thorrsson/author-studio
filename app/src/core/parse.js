@@ -45,6 +45,32 @@ export function separatePlanningAppendix(value) {
   };
 }
 
+// Only detach a recognizable, list-only planning appendix, never a story
+// section merely titled "Threads" or prose that follows such a section.
+export function splitChapterNotes(content) {
+  const heading = /^#{1,6}[ \t]+(?:Threads|Changes to the scene timeline)[ \t]*\r?$/gim;
+  for (const match of content.matchAll(heading)) {
+    const notes = content.slice(match.index).trim();
+    const recognizable = /^\*\*(?:Resolved Threads|New Threads Introduced)(?:[ \t]+\([^*\n]*\))?:\*\*[ \t]*\r?$/im.test(notes)
+      || (/^#{1,6}[ \t]+Changes to the scene timeline[ \t]*\r?$/im.test(notes) && /^[ \t]*[-*+][ \t]+\*\*Beats for Unit \d+:\*\*[ \t]*\r?$/im.test(notes));
+    const listOnly = notes.split(/\r?\n/).every((line) => !line.trim()
+      || /^[ \t]*(?:#{1,6}[ \t]+|[-*+][ \t]+|\d+[.)][ \t]+|\*\*[^*]+\*\*[ \t]*$|(?:-{3,}|\*{3,}|_{3,})[ \t]*$)/.test(line));
+    if (recognizable && listOnly && /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/m.test(notes)) {
+      return { content: cleanArtifact(content.slice(0, match.index)), continuityNotes: notes };
+    }
+  }
+  return { content, continuityNotes: '' };
+}
+
+function separateChapterPlanningNotes(content) {
+  const separated = separatePlanningAppendix(content);
+  if (separated.separatedNotes) return separated;
+  const legacy = splitChapterNotes(separated.artifact);
+  return legacy.continuityNotes
+    ? { artifact: legacy.content, separatedNotes: legacy.continuityNotes }
+    : separated;
+}
+
 // Finds the end of the JSON object that starts at `start`, honoring strings.
 function matchingBrace(text, start) {
   let depth = 0;
@@ -152,14 +178,14 @@ export function splitResponse(raw, { separatePlanning = true } = {}) {
 
 function splitArtifact(value, assessmentText, markerFound, separatePlanning) {
   return {
-    ...(separatePlanning ? separatePlanningAppendix(value) : { artifact: cleanArtifact(value) }),
+    ...(separatePlanning ? separateChapterPlanningNotes(value) : { artifact: cleanArtifact(value) }),
     assessmentText,
     markerFound,
   };
 }
 
 // The text to show while a response is still streaming.
-export function visibleArtifact(raw, { separatePlanning = true } = {}) {
+export function visibleArtifact(raw, { separatePlanning = false, chapter = false } = {}) {
   const text = stripThinking(raw);
   const marker = LIVE_MARKER.exec(text);
   let visible = marker ? text.slice(0, marker.index) : text;
@@ -169,7 +195,8 @@ export function visibleArtifact(raw, { separatePlanning = true } = {}) {
     || (partial.length >= 6 && 'AUTHOR STUDIO ASSESSMENT'.startsWith(partial))) {
     visible = visible.slice(0, visible.length - lastLine.length);
   }
-  return separatePlanning ? separatePlanningAppendix(visible).artifact : cleanArtifact(visible);
+  const content = cleanArtifact(visible);
+  return separatePlanning || chapter ? separateChapterPlanningNotes(content).artifact : content;
 }
 
 export function toConfidence(value) {

@@ -93,6 +93,13 @@ tone, pacing, and genre balance without imposing epic or speculative language.
 Use scene goals, conflict, sensory detail, interiority, and consequences as
 appropriate to the form. Track new facts and threads proposed by the writing.
 
+Keep the chapter artifact manuscript-only. Do not append Threads, continuity
+notes, scene timeline changes, or story beats to it. Record these separately
+as proposed state changes: open or advanced questions in `plot.loose_threads`,
+confirmed resolutions by exact accepted thread text, actual events in
+`lore.timeline_log`, and planned actions in `plot.act_beats`. Include the unit
+number in event and beat descriptions. A possibility is not a resolution.
+
 If a response limit prevents completion, label the artifact incomplete, flag
 the shortfall for review, and wait for a user command. Never mark a partial
 unit completed or silently promise to continue in the background. State word
@@ -114,3 +121,6 @@ Preserve the author's intent and accepted canon. A canon-changing edit is a
 proposal requiring review when it contradicts established facts, even if the
 prose is stronger. Never overwrite the accepted version until the candidate is
 accepted, and never silently edit unrelated chapters.
+
+For chapter revisions, keep continuity updates and the change summary separate
+from the manuscript, using the same separation as the Scene Writer.

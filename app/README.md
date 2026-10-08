@@ -57,6 +57,22 @@ The first version with this updater must be installed manually; older
 versions cannot update themselves. Update checks contact GitHub, not your AI
 provider, and do not send project text or API keys.
 
+## Manuscript and continuity notes
+
+Chapters contain manuscript text only. Thread updates, actual timeline events,
+and planned story beats are submitted separately and enter the **Story bible**
+only when the chapter is accepted. **Chapter updates** retains the submitted
+updates by chapter, including thread resolutions.
+
+If a model appends a recognizable list of thread or scene-timeline notes to a
+chapter, the app preserves it under **Separated planning notes** and asks for
+review. These notes are excluded from chapter word counts, copying, and
+manuscript exports; they are not automatically converted into canon. Request
+changes to reconcile them with the structured Story bible updates before
+approving. Full project backups retain the notes. Previously saved chapters
+are not rewritten automatically; revise an affected chapter to separate its
+notes while keeping its old version in History.
+
 ## Choosing an AI model
 
 The first screen asks you to connect a model. You can change this later in
@@ -116,10 +132,40 @@ no contradictions of your accepted story and nothing unfinished, is accepted
 automatically. Anything else waits for you to approve it, ask for changes, or
 reject it. Your story bible changes only when you accept something.
 
+If a writing, planning, revision, or continuation response omits a usable
+confidence rating, the app makes one assessment-only request to the same model,
+without rewriting the text. This uses the full artifact and story baseline;
+if they cannot fit, the request fails, or the assessment is still unusable,
+the artifact stays unrated and waits for human review. A recovered rating never
+overrides a cutoff, an unfinished artifact, or a reported canon conflict.
+The follow-up uses additional model tokens.
+
+For multiple chapters, turn on **YOLO mode** under Write and select the last
+chapter. It keeps drafting accepted chapters and pauses whenever a chapter
+needs review, including when its assessment cannot be recovered.
+
 The **History** tab shows every decision, and you can download the manuscript
 as a Word document from the **Manuscript** tab.
 
 ## Your data and privacy
+
+### Exporting research and plans
+
+You can use Author Studio entirely for research and story planning without
+drafting chapters. Choose **Export…** in any project or **File → Export Project
+Content** (`Cmd/Ctrl+E`) and select the story bible, research, setting, story
+plan, idea and brief, or a complete planning packet. Each is available as a
+Word document (`.docx`), Markdown (`.md`), or plain text (`.txt`).
+
+The story bible includes established characters, setting, timeline, and plot
+details plus the full accepted research, setting, and story-plan documents.
+The planning packet also includes the saved idea, genre, and creative brief,
+but no manuscript. Individual research, setting, and story-plan exports include
+all accepted documents of that kind. Pending, rejected, and superseded versions
+are excluded. Save brief edits before exporting. These readable exports do not
+replace project backups or the plugin's JSON state file.
+
+### Local storage and privacy
 
 - Projects are saved on your computer. Use **Help → Show Projects Folder** to
   find them. They live in `~/Library/Application Support/Author Studio` on a

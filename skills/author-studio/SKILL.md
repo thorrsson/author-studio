@@ -165,6 +165,12 @@ accepted canon, not filesystem locking. Editing an accepted artifact creates a
 new candidate version; keep the accepted version until its replacement passes
 review. Do not mark a chapter completed because it was merely proposed.
 
+Chapter artifacts contain only manuscript text. Keep thread updates, timeline
+changes, planned beats, and editing commentary outside `artifact.content`,
+including when revising or continuing a chapter. Track them as proposed state
+changes and apply them only on acceptance; do not append them to the chapter.
+Keep tentative thread answers open rather than treating them as resolutions.
+
 Before creating an artifact, check the available snapshot and relevant accepted
 artifacts. If required context is absent, request it instead of inventing prior
 canon. Creative choices can be proposed as new material, never as established

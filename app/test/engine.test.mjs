@@ -23,7 +23,8 @@ import {
 } from '../src/core/engine.js';
 import { validateSnapshot } from '../src/core/state.js';
 import { countWords } from '../src/core/parse.js';
-import { good, makeCtx, respond, template } from './helpers.mjs';
+import { ProviderError } from '../src/providers/errors.js';
+import { COMPACT, good, makeCtx, respond, template } from './helpers.mjs';
 
 const START = JSON.stringify({ title: 'The Bell of Kilmore', genre: 'historical mystery', brief: '- Form: novel\n- Unit: chapter' });
 
@@ -47,6 +48,83 @@ function assertCode(code) {
     return true;
   };
 }
+
+test('chapter planning appendices are preserved separately, gated, and excluded from exports', async () => {
+  const prose = '# Chapter 7\n\nHiro closed the door.';
+  const notes = '### Threads\n\n**New Threads Introduced (by this chapter):**\n\n- What does Hiro know?';
+  const patch = { plot: { loose_threads: ['What does Hiro know?'], act_beats: ['Unit 7: Infiltrate the mainframe room'] }, lore: { timeline_log: ['Unit 7: Hiro closes the door'] } };
+  const { project, ctx } = await started();
+  const deltas = [];
+  ctx.onDelta = (value) => deltas.push(value);
+  ctx.generate = makeCtx([good(`${prose}\n\n${notes}`, { proposed_changes: patch })]).ctx.generate;
+  const result = await runStep(project, { action: 'draft', chapter: 7 }, ctx);
+  assert.equal(result.outcome, 'gated', 'even a confident model must not silently lose misplaced notes');
+  const artifact = result.project.artifacts[result.artifactId];
+  assert.equal(artifact.content, prose);
+  assert.equal(artifact.continuityNotes, notes);
+  assert.equal(artifact.words, countWords(prose));
+  assert.equal(deltas.at(-1), prose);
+  assert.deepEqual(result.project.state.plot.loose_threads, [], 'pending notes do not change canon');
+  assert.match(result.project.gate.reasons.join(' '), /Planning notes were separated/);
+  assert.equal(importProjectBackup(result.project, ctx).artifacts[result.artifactId].continuityNotes, notes);
+  const approved = approvePending(result.project, {}, ctx).project;
+  assert.deepEqual(approved.state.plot.loose_threads, patch.plot.loose_threads);
+  assert.deepEqual(approved.state.plot.act_beats, patch.plot.act_beats);
+  assert.deepEqual(approved.state.lore.timeline_log, patch.lore.timeline_log);
+  assert.doesNotMatch(manuscriptMarkdown(approved), /Threads|What does Hiro know/);
+  assert.match(manuscriptMarkdown(approved), /Hiro closed the door/);
+  assertValid(approved);
+});
+
+test('planning documents keep their thread sections', async () => {
+  const content = '# Plan\n\n### Threads\n\n**New Threads Introduced:**\n\n- Who took the bell?';
+  const { project, ctx } = await started([good(content)]);
+  const result = await runStep(project, { action: 'plot' }, ctx);
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(result.project.artifacts[result.artifactId].content, content);
+  assert.equal(result.project.artifacts[result.artifactId].continuityNotes, undefined);
+});
+
+test('continuations preserve separated notes without joining them to the prose', async () => {
+  const firstNotes = '### Threads\n\n**New Threads Introduced:**\n\n- Who took the bell?';
+  const nextNotes = '### Threads\n\n**New Threads Introduced:**\n\n- Where is Hiro?';
+  for (const acceptFirst of [false, true]) {
+    const { project, ctx } = await started([
+      good(`The door opened.\n\n${firstNotes}`, { complete: false }),
+      good(`Hiro entered.\n\n${nextNotes}`),
+    ]);
+    let current = (await runStep(project, { action: 'draft', chapter: 1 }, ctx)).project;
+    if (acceptFirst) current = approvePending(current, {}, ctx).project;
+    const result = acceptFirst
+      ? await continueAccepted(current, 'chapter-1-v1', ctx)
+      : await continuePending(current, ctx);
+    const artifact = result.project.artifacts[result.artifactId];
+    assert.equal(artifact.content, 'The door opened.\n\nHiro entered.');
+    assert.equal(artifact.continuityNotes, `${firstNotes}\n\n${nextNotes}`);
+    assert.equal(result.outcome, 'gated');
+    assertValid(result.project);
+  }
+});
+
+test('revising misplaced notes routes supported updates to canon only after approval', async () => {
+  const prose = '# Chapter 1\n\nHiro entered the warehouse.';
+  const notes = '### Threads\n\n**New Threads Introduced:**\n\n- Who is Hiro?';
+  const { project, ctx, calls } = await started([
+    good(`${prose}\n\n${notes}`),
+    good(prose, { proposed_changes: { plot: { loose_threads: ['Who is Hiro?'] } } }),
+  ]);
+  const initial = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  const revised = await modifyPending(initial.project, { notes: 'Reconcile the separated notes with the story bible.' }, ctx);
+  const artifact = revised.project.artifacts[revised.artifactId];
+  assert.equal(artifact.continuityNotes, undefined);
+  assert.equal(artifact.content, prose);
+  assert.match(calls.at(-1).prompt, /Separated continuity notes/);
+  assert.deepEqual(revised.project.state.plot.loose_threads, []);
+  const approved = approvePending(revised.project, {}, ctx).project;
+  assert.deepEqual(approved.state.plot.loose_threads, ['Who is Hiro?']);
+  assert.equal(approved.artifacts[initial.artifactId].continuityNotes, notes, 'the earlier version preserves the raw notes');
+  assertValid(approved);
+});
 
 test('start initializes from the concept without guessing or drafting', async () => {
   const { project, calls } = await started();
@@ -126,15 +204,170 @@ test('blocks other steps while a gate is pending', async () => {
   assert.throws(() => rejectPending(project), assertCode('no-gate'));
 });
 
-test('a missing assessment is unassessed and gated', async () => {
+test('a missing assessment stays unassessed and gated after one unusable follow-up', async () => {
   const { project, ctx } = await started();
-  ctx.generate = makeCtx(['# Setting\n\nJust prose, no assessment.']).ctx.generate;
+  const { ctx: model, calls } = makeCtx(['# Setting\n\nJust prose, no assessment.', 'No rating.']);
+  ctx.generate = model.generate;
   const { project: gated, outcome } = await runStep(project, { action: 'world' }, ctx);
   assert.equal(outcome, 'gated');
   assert.equal(gated.state.pending_review.confidence, null);
   assert.match(gated.state.pending_review.flags[0], /unassessed/);
   assert.equal(gated.state.orchestrator_log.at(-1).confidence, null);
+  assert.equal(calls.length, 2);
+  assert.match(gated.artifacts['world-1'].flags.join(' '), /one follow-up/);
   assertValid(gated);
+});
+
+test('recovers missing ratings for every worker without rewriting the artifact', async () => {
+  const { project } = await started();
+  const assessment = {
+    confidence: 0.86, rationale: 'Fits the accepted story.', complete: true,
+    summary: 'Nora hears the bell.', proposed_changes: { lore: { timeline_log: ['The bell rings'] } },
+  };
+  for (const action of ['research', 'world', 'plot', 'draft', 'edit']) {
+    const base = action === 'edit'
+      ? (await runStep(project, { action: 'draft', chapter: 1 }, makeCtx([good('Original.')]).ctx)).project
+      : project;
+    const content = '# Text\n\nNora heard the bell.';
+    const { ctx, calls } = makeCtx([content, JSON.stringify(assessment)]);
+    const result = await runStep(base, { action, chapter: 1 }, ctx);
+    const artifact = result.project.artifacts[result.artifactId];
+    assert.equal(result.outcome, 'accepted', action);
+    assert.equal(artifact.content, content);
+    assert.equal(artifact.confidence, 0.86);
+    assert.equal(artifact.assessed, true);
+    assert.equal(artifact.assessmentError, null);
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].prompt, /Artifact to assess/);
+    assert.ok(calls[1].prompt.includes(content));
+    assert.equal(calls[1].onDelta instanceof Function, true);
+    assert.deepEqual(result.project.state.lore.timeline_log, ['The bell rings']);
+    assertValid(result.project);
+  }
+});
+
+test('recovered assessments preserve confidence and contradiction gates', async () => {
+  const { project } = await started();
+  for (const extra of [{ confidence: 0.75 }, { contradictions: ['Nora has changed identity.'] }, { complete: false }]) {
+    const { ctx } = makeCtx(['Draft text.', good('', extra)]);
+    const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+    assert.equal(result.outcome, 'gated');
+    assert.deepEqual(result.project.state.draft_progress.completed_chapters, []);
+    assertValid(result.project);
+  }
+});
+
+test('assessment recovery preserves existing concerns and incomplete status', async () => {
+  const { project } = await started();
+  const { ctx } = makeCtx([
+    good('Draft text.', { confidence: null, complete: false, contradictions: ['Existing conflict.'], proposed_changes: { lore: { timeline_log: ['Original event'] } } }),
+    good('', { confidence: 0.99, complete: true, proposed_changes: { lore: { timeline_log: ['New event'] } } }),
+  ]);
+  const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  const artifact = result.project.artifacts[result.artifactId];
+  assert.equal(result.outcome, 'gated');
+  assert.equal(artifact.complete, false);
+  assert.deepEqual(artifact.contradictions, ['Existing conflict.']);
+  assert.deepEqual(artifact.proposedChanges.lore.timeline_log, ['New event']);
+});
+
+test('recovered assessments replace stale canon proposals before automatic acceptance', async () => {
+  const { project } = await started();
+  for (const proposed_changes of [{}, { lore: { timeline_log: ['Recovered event'] } }]) {
+    const { ctx } = makeCtx([
+      good('Draft text.', { confidence: null, proposed_changes: { lore: { timeline_log: ['Stale event'] }, characters: [{ name: 'Stale character' }] } }),
+      good('', { proposed_changes }),
+    ]);
+    const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+    assert.equal(result.outcome, 'accepted');
+    assert.deepEqual(result.project.artifacts[result.artifactId].proposedChanges, proposed_changes);
+    assert.deepEqual(result.project.state.lore.timeline_log, proposed_changes.lore?.timeline_log ?? []);
+    assert.deepEqual(result.project.state.characters, []);
+    assertValid(result.project);
+  }
+});
+
+test('never accepts a truncated or incomplete assessment follow-up', async () => {
+  const { project } = await started();
+  for (const followUp of [
+    { text: good('', { confidence: 0.99 }), finishReason: 'length' },
+    '{"confidence": 0.99}',
+    '{"confidence": 0.99, "complete": true}',
+    '{"confidence": 2, "complete": true}',
+    '```json\n{broken}\n```',
+  ]) {
+    const { ctx, calls } = makeCtx(['Draft text.', followUp]);
+    const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+    assert.equal(result.outcome, 'gated');
+    assert.equal(result.project.state.pending_review.confidence, null);
+    assert.equal(calls.length, 2);
+  }
+});
+
+test('an oversized artifact is preserved and gated instead of assessing an excerpt', async () => {
+  const { project } = await started();
+  const content = '# Chapter 1\n\n' + 'The bell rang. '.repeat(3000);
+  const { ctx, calls } = makeCtx([content], { profile: COMPACT });
+  const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  assert.equal(result.outcome, 'gated');
+  assert.equal(calls.length, 1);
+  const artifact = result.project.artifacts[result.artifactId];
+  assert.equal(artifact.content, content.trim());
+  assert.match(artifact.flags.join(' '), /full artifact and story baseline do not fit/);
+});
+
+test('a provider failure during recovery preserves the draft and explains the gate', async () => {
+  const { project } = await started();
+  const { ctx } = makeCtx(['Draft text.', () => { throw new ProviderError('network', 'Server unavailable.'); }]);
+  const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  assert.equal(result.outcome, 'gated');
+  assert.equal(result.project.artifacts[result.artifactId].content, 'Draft text.');
+  assert.match(result.project.artifacts[result.artifactId].flags.join(' '), /assessment follow-up failed: Server unavailable/);
+});
+
+test('cancelling recovery still cancels the operation without changing the project', async () => {
+  const { project } = await started();
+  const before = structuredClone(project);
+  const { ctx } = makeCtx(['Draft text.', () => { throw Object.assign(new Error('Aborted'), { name: 'AbortError' }); }]);
+  await assert.rejects(runStep(project, { action: 'draft', chapter: 1 }, ctx), assertCode('cancelled'));
+  assert.deepEqual(project, before);
+});
+
+test('MODIFY and continuations recover assessments but preserve the pending gate', async () => {
+  const { project } = await started();
+  const gated = await runStep(project, { action: 'draft', chapter: 1, notes: 'Keep the ending quiet.' }, makeCtx([good('First half.', {
+    complete: false, proposed_changes: { lore: { timeline_log: ['Prior event'] } },
+  })]).ctx);
+  const modified = await modifyPending(gated.project, { notes: 'Make it clearer.' }, makeCtx(['Revised text.', good('')]).ctx);
+  assert.equal(modified.outcome, 'gated');
+  assert.equal(modified.project.state.pending_review.confidence, 0.9);
+  const { ctx, calls } = makeCtx([
+    good('Second half.', { confidence: null, proposed_changes: { lore: { timeline_log: ['Stale continuation event'] } } }),
+    good('', { proposed_changes: { lore: { timeline_log: ['Recovered continuation event'] } } }),
+  ]);
+  const continued = await continuePending(gated.project, ctx);
+  assert.equal(continued.outcome, 'gated');
+  assert.equal(continued.project.state.pending_review.confidence, 0.9);
+  assert.ok(calls[1].prompt.includes('First half.\n\nSecond half.'));
+  assert.ok(calls[1].prompt.includes('Keep the ending quiet.'));
+  assert.deepEqual(continued.project.artifacts[continued.artifactId].proposedChanges.lore.timeline_log, ['Prior event', 'Recovered continuation event']);
+  const approved = approvePending(gated.project);
+  const { ctx: acceptedCtx, calls: acceptedCalls } = makeCtx(['Second half.', good('')]);
+  const finished = await continueAccepted(approved.project, gated.artifactId, acceptedCtx);
+  assert.equal(finished.outcome, 'accepted');
+  assert.equal(finished.project.artifacts[finished.artifactId].content, 'First half.\n\nSecond half.');
+  assert.ok(acceptedCalls[1].prompt.includes('Keep the ending quiet.'));
+});
+
+test('sequential YOLO drafts can continue after a missing rating is recovered', async () => {
+  const { project } = await started();
+  const { ctx, calls } = makeCtx(['Chapter one.', good(''), good('Chapter two.')]);
+  const first = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  assert.equal(first.outcome, 'accepted');
+  const second = await runStep(first.project, { action: 'draft', chapter: 2 }, ctx);
+  assert.equal(second.outcome, 'accepted');
+  assert.deepEqual(second.project.state.draft_progress.completed_chapters, [1, 2]);
+  assert.equal(calls.length, 3, 'an existing usable rating does not trigger another request');
 });
 
 test('contradictions need explicit confirmation before approval', async () => {
@@ -236,7 +469,7 @@ test('planning appendices are preserved separately and require review before cha
   assert.equal(gated.outcome, 'gated');
   assert.equal(candidate.content, manuscript);
   assert.equal(candidate.words, countWords(manuscript));
-  assert.match(gated.project.gate.reasons.join(' '), /Separated planning notes need your review/);
+  assert.match(gated.project.gate.reasons.join(' '), /Planning notes were separated/);
   assert.equal(gated.project.state.pending_review.artifact.separated_notes, '## Thread tracking\n- Who rang the bell?\n- Nora promises to return.');
   assert.deepEqual(gated.project.state.chapter_updates, []);
 
@@ -278,10 +511,11 @@ test('revising a legacy chapter separates its appendix and keeps the original ve
 
 test('an unfinished draft is gated and never marked complete by approval', async () => {
   const { project, ctx } = await started();
-  ctx.generate = makeCtx([{ text: '# Chapter 1\n\nNora climbed the tower and', finishReason: 'length' }]).ctx.generate;
+  ctx.generate = makeCtx([{ text: '# Chapter 1\n\nNora climbed the tower and', finishReason: 'length' }, good('')]).ctx.generate;
   const gated = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
   assert.equal(gated.outcome, 'gated');
   assert.equal(gated.project.artifacts['chapter-1-v1'].complete, false);
+  assert.equal(gated.project.artifacts['chapter-1-v1'].confidence, 0.9);
   assert.ok(gated.project.state.pending_review.flags.some((flag) => /length limit/.test(flag)));
   const approved = approvePending(gated.project, {}, ctx);
   assert.deepEqual(approved.project.state.draft_progress.completed_chapters, []);

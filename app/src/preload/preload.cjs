@@ -20,6 +20,7 @@ const CHANNELS = [
   'engine:run',
   'engine:cancel',
   'files:exportManuscript',
+  'files:exportDocument',
   'files:exportSnapshot',
   'files:exportBackup',
   'files:import',

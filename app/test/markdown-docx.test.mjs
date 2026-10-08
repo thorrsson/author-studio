@@ -3,6 +3,8 @@ import test from 'node:test';
 import { inflateRawSync } from 'node:zlib';
 import { inlineText, markdownToText, parseInline, parseMarkdown } from '../src/core/markdown.js';
 import { createDocx, paperForCountry, zip } from '../src/main/docx.js';
+import { exportMarkdown } from '../src/core/exports.js';
+import { template } from './helpers.mjs';
 
 test('parses headings, verse line breaks, lists, quotes, rules, tables, and code', () => {
   const blocks = parseMarkdown('# Title\n\nRoses are red,\nviolets are blue.\n\n- one\n  - two\n3. three\n\n> quoted\n\n* * *\n\n| a | b |\n|:--|--:|\n| 1 | 2 |\n\n```\nx < y\n```');
@@ -76,4 +78,30 @@ test('picks Letter paper for North America and A4 elsewhere', () => {
   assert.equal(paperForCountry('ca'), 'letter');
   assert.equal(paperForCountry('GB'), 'a4');
   assert.equal(paperForCountry(''), 'a4');
+});
+
+test('planning packet Word export contains canon, full research, references, and no unapproved text', () => {
+  const state = structuredClone(template);
+  state.project.title = 'Research & plans';
+  state.project.concept = 'A lost letter';
+  state.characters = [{ name: 'Ada', role: 'Detective', arc_stage: 'Searching', voice_notes: 'Precise' }];
+  const project = {
+    state,
+    artifacts: {
+      'research-1': { id: 'research-1', type: 'research', status: 'accepted', content: '## Postal history\n\nA **sealed letter**.\n\nSource: [Archive](https://example.com/archive)\n\nUncertainty: check the date.' },
+      'research-2': { id: 'research-2', type: 'research', status: 'pending', content: 'Unapproved secret' },
+    },
+  };
+  const entries = readZip(createDocx(exportMarkdown(project, 'planning')));
+  const document = entries.get('word/document.xml');
+  for (const text of ['Research &amp; plans', 'A lost letter', 'Ada', 'Detective', 'Postal history', 'sealed letter', 'Archive', 'Uncertainty: check the date.']) assert.ok(document.includes(text), text);
+  assert.ok(document.includes('https://example.com/archive'));
+  assert.doesNotMatch(document, /Unapproved secret|No accepted chapters/);
+});
+
+test('planning plain text keeps reference URLs in paragraphs, lists, quotes, and tables', () => {
+  const markdown = '# [Heading](https://example.com/heading)\n\nSource: **[Archive](https://example.com/archive)**\n\n- [List](https://example.com/list)\n\n> [Quote](https://example.com/quote)\n\n| Source |\n| --- |\n| [Table](https://example.com/table) |';
+  const text = markdownToText(markdown, { includeLinks: true });
+  for (const key of ['heading', 'archive', 'list', 'quote', 'table']) assert.ok(text.includes(`https://example.com/${key}`), key);
+  assert.doesNotMatch(markdownToText(markdown), /https:/, 'default manuscript conversion remains unchanged');
 });

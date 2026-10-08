@@ -71,11 +71,13 @@ function yoloChapter(number, confidence) {
 }
 
 // Replies in the order the walkthrough asks for them.
+const YOLO_SECOND = yoloChapter(2, 0.9).split(ASSESSMENT_HEADING);
 const SCRIPT = [
   { text: BRIEF, size: 8, delay: 25 },
   { text: WORLD },
   { text: CHAPTER },
-  { text: yoloChapter(2, 0.9) },
+  { text: YOLO_SECOND[0].trim() },
+  { text: `${ASSESSMENT_HEADING}${YOLO_SECOND[1]}` },
   { text: yoloChapter(3, 0.9) },
   { text: yoloChapter(4, 0.5) },
   { text: 'A plan that takes a long time. '.repeat(400), size: 12, delay: 120 },
@@ -172,11 +174,51 @@ async function main() {
     await shot('03-new-project-streaming');
     await page.getByRole('heading', { name: 'The Lantern Keeper', level: 1 }).waitFor();
 
+    step('unavailable story bible cannot launch an export');
+    await page.click('.tab:has-text("Story bible")');
+    await page.getByRole('heading', { name: 'The story bible is empty' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Export story bible…', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Export…', exact: true }).click();
+    assert.equal(await page.locator('#export-target option[value="bible"]').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.click('.tab:has-text("Write")');
+
     step('accept a setting automatically');
     await page.click('.step-option:has-text("Setting")');
     await page.click('.composer .btn.primary');
     await page.waitForSelector('.result-card:has-text("Accepted")');
     await shot('04-accepted');
+
+    step('export planning content before writing any chapters');
+    const planningPath = path.join(userData, 'planning.md');
+    await app.evaluate(({ dialog: electronDialog }, filePath) => {
+      electronDialog.showSaveDialog = async () => ({ canceled: false, filePath });
+    }, planningPath);
+    await page.getByRole('button', { name: 'Export…', exact: true }).click();
+    assert.equal(await page.inputValue('#export-target'), 'planning');
+    assert.equal(await page.locator('#export-target option[value="manuscript"]').isDisabled(), true);
+    assert.equal(await page.locator('#export-target option[value="research"]').isDisabled(), true);
+    await dialog().getByRole('button', { name: 'Markdown (.md)', exact: true }).click();
+    await page.waitForSelector('.modal-overlay', { state: 'detached' });
+    const packet = await readFile(planningPath, 'utf8');
+    assert.match(packet, /Morag Sinclair/);
+    assert.match(packet, /forty-one people/);
+    assert.match(packet, /no supernatural explanation/);
+    assert.doesNotMatch(packet, /No accepted chapters/);
+    await page.click('.tab:has-text("Story bible")');
+    assert.equal(await page.getByRole('button', { name: 'Export story bible…', exact: true }).isEnabled(), true);
+    await page.getByRole('button', { name: 'Export story bible…', exact: true }).click();
+    assert.equal(await page.inputValue('#export-target'), 'bible');
+    await page.selectOption('#export-target', 'world');
+    assert.match(await dialog().textContent(), /Every accepted setting document/);
+    await app.evaluate(({ dialog: electronDialog }) => {
+      electronDialog.showSaveDialog = async () => ({ canceled: true });
+    });
+    await dialog().getByRole('button', { name: 'Plain text (.txt)', exact: true }).click();
+    await page.waitForSelector('.modal button:has-text("Plain text (.txt)"):not(:disabled)');
+    assert.equal(await page.inputValue('#export-target'), 'world', 'cancel leaves export choices open');
+    await page.keyboard.press('Escape');
+    await page.click('.tab:has-text("Write")');
 
     step('gate a low-confidence chapter for review');
     await page.click('.step-option:has-text("Write")');
@@ -190,7 +232,7 @@ async function main() {
     await page.waitForSelector('.toast:has-text("You approved")');
     await page.waitForSelector('.composer');
 
-    step('write several chapters in YOLO mode until one needs review');
+    step('recover a missing assessment in YOLO mode and continue until review is needed');
     await page.click('.step-option:has-text("Write")');
     assert.equal(await page.inputValue('#step-chapter'), '2');
     await page.check('#step-yolo');
