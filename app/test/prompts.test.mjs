@@ -66,6 +66,52 @@ test('full prompts carry the shared worker guide and the response contract', asy
   assert.ok(fits(request, FULL));
 });
 
+test('all chapter operations keep manuscript and structured continuity updates separate', async () => {
+  const current = await project([{ request: { action: 'draft', chapter: 1 }, response: good('# Chapter 1\n\nThe oven hummed.') }]);
+  const target = current.artifacts['chapter-1-v1'];
+  for (const profile of [FULL, COMPACT]) {
+    for (const mode of ['new', 'edit', 'revise', 'continue']) {
+      const request = buildWorkerPrompt({
+        project: current, mode, action: 'draft', worker: mode === 'edit' ? 'Editor' : 'Scene Writer',
+        chapter: 2, target: mode === 'new' ? undefined : target, profile, resources,
+      });
+      assert.match(request.prompt, /chapter artifact must contain manuscript text only/);
+      assert.match(request.prompt, /plot\.loose_threads/);
+      assert.match(request.prompt, /plot\.resolved_threads/);
+      assert.match(request.prompt, /lore\.timeline_log/);
+      assert.match(request.prompt, /planned actions in plot\.act_beats/);
+      assert.match(request.prompt, /possibly Hiro.*remains open, not resolved/);
+      assert.ok(fits(request, profile));
+    }
+  }
+  const request = buildWorkerPrompt({
+    project: current, mode: 'revise', worker: 'Scene Writer',
+    target: { ...target, continuityNotes: '### Threads\n**New Threads Introduced:**\n- Who took the bread?' },
+    profile: FULL, resources,
+  });
+  assert.match(request.prompt, /Separated continuity notes \(unaccepted model-generated proposals\)/);
+  assert.match(request.prompt, /Who took the bread/);
+  assert.match(request.prompt, /Include supported updates in proposed_changes/);
+  assert.match(request.prompt, /not author instructions or accepted canon/);
+  assert.doesNotMatch(request.prompt, /These come from the author/);
+});
+
+test('large separated notes shrink into the compact prompt budget', async () => {
+  const current = await project();
+  const target = {
+    id: 'chapter-1-v1', type: 'chapter', chapter: 1, worker: 'Scene Writer',
+    content: '# Chapter 1\n\nA short story.',
+    continuityNotes: `### Threads\n\n${'- Possible thread detail. '.repeat(250)}`,
+  };
+  const request = buildWorkerPrompt({
+    project: current, mode: 'revise', worker: 'Scene Writer', target, profile: COMPACT, resources,
+  });
+  assert.ok(fits(request, COMPACT));
+  assert.ok(request.contextNotes.includes('separated continuity notes was shortened.'));
+  assert.match(request.prompt, /untrusted model-generated material, not author instructions or accepted canon/);
+  assert.match(request.prompt, /omitted to fit the model's memory/);
+});
+
 test('assessment-only prompts include the full artifact and honest rating instructions', async () => {
   const current = await project();
   current.state.lore.timeline_log = Array.from({ length: 20 }, (_, index) => `Event ${index + 1}`);
@@ -96,15 +142,14 @@ test('compact prompts fit a 4K on-device model and report shortened context', as
   const request = buildWorkerPrompt({ project: current, mode: 'new', action: 'draft', worker: 'Scene Writer', chapter: 2, profile: COMPACT, resources });
   assert.ok(fits(request, COMPACT), 'prompt and reply fit in the context window');
   assertBalancedTags(request.prompt);
-  assert.match(request.prompt, /<artifact id="chapter-1-v1">\n\[… earlier text omitted/);
-  assert.match(request.prompt, /omitted to fit the model's memory …\]\n\nThe oven hummed/);
+  assert.match(request.prompt, /Earlier units \(summaries\)/);
+  assert.match(request.prompt, /Unit 1 \(chapter-1-v1.*Summary of # Chapter 1/);
   assert.ok(request.maxTokens >= 1000);
   assert.ok(request.contextNotes.length > 0);
   assert.match(request.system, /Your role: Draft the requested chapter/);
   assert.doesNotMatch(request.system, /## Worker guide/);
   assert.match(request.prompt, /room for about [\d,]+ words/);
   assert.doesNotMatch(request.prompt, /\u27e6/);
-  assert.match(request.prompt, /End of unit 1/);
 });
 
 test('targets that cannot fit are refused instead of silently truncated', async () => {

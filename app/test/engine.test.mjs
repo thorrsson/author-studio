@@ -22,6 +22,7 @@ import {
   updateBrief,
 } from '../src/core/engine.js';
 import { validateSnapshot } from '../src/core/state.js';
+import { countWords } from '../src/core/parse.js';
 import { ProviderError } from '../src/providers/errors.js';
 import { COMPACT, good, makeCtx, respond, template } from './helpers.mjs';
 
@@ -47,6 +48,83 @@ function assertCode(code) {
     return true;
   };
 }
+
+test('chapter planning appendices are preserved separately, gated, and excluded from exports', async () => {
+  const prose = '# Chapter 7\n\nHiro closed the door.';
+  const notes = '### Threads\n\n**New Threads Introduced (by this chapter):**\n\n- What does Hiro know?';
+  const patch = { plot: { loose_threads: ['What does Hiro know?'], act_beats: ['Unit 7: Infiltrate the mainframe room'] }, lore: { timeline_log: ['Unit 7: Hiro closes the door'] } };
+  const { project, ctx } = await started();
+  const deltas = [];
+  ctx.onDelta = (value) => deltas.push(value);
+  ctx.generate = makeCtx([good(`${prose}\n\n${notes}`, { proposed_changes: patch })]).ctx.generate;
+  const result = await runStep(project, { action: 'draft', chapter: 7 }, ctx);
+  assert.equal(result.outcome, 'gated', 'even a confident model must not silently lose misplaced notes');
+  const artifact = result.project.artifacts[result.artifactId];
+  assert.equal(artifact.content, prose);
+  assert.equal(artifact.continuityNotes, notes);
+  assert.equal(artifact.words, countWords(prose));
+  assert.equal(deltas.at(-1), prose);
+  assert.deepEqual(result.project.state.plot.loose_threads, [], 'pending notes do not change canon');
+  assert.match(result.project.gate.reasons.join(' '), /Planning notes were separated/);
+  assert.equal(importProjectBackup(result.project, ctx).artifacts[result.artifactId].continuityNotes, notes);
+  const approved = approvePending(result.project, {}, ctx).project;
+  assert.deepEqual(approved.state.plot.loose_threads, patch.plot.loose_threads);
+  assert.deepEqual(approved.state.plot.act_beats, patch.plot.act_beats);
+  assert.deepEqual(approved.state.lore.timeline_log, patch.lore.timeline_log);
+  assert.doesNotMatch(manuscriptMarkdown(approved), /Threads|What does Hiro know/);
+  assert.match(manuscriptMarkdown(approved), /Hiro closed the door/);
+  assertValid(approved);
+});
+
+test('planning documents keep their thread sections', async () => {
+  const content = '# Plan\n\n### Threads\n\n**New Threads Introduced:**\n\n- Who took the bell?';
+  const { project, ctx } = await started([good(content)]);
+  const result = await runStep(project, { action: 'plot' }, ctx);
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(result.project.artifacts[result.artifactId].content, content);
+  assert.equal(result.project.artifacts[result.artifactId].continuityNotes, undefined);
+});
+
+test('continuations preserve separated notes without joining them to the prose', async () => {
+  const firstNotes = '### Threads\n\n**New Threads Introduced:**\n\n- Who took the bell?';
+  const nextNotes = '### Threads\n\n**New Threads Introduced:**\n\n- Where is Hiro?';
+  for (const acceptFirst of [false, true]) {
+    const { project, ctx } = await started([
+      good(`The door opened.\n\n${firstNotes}`, { complete: false }),
+      good(`Hiro entered.\n\n${nextNotes}`),
+    ]);
+    let current = (await runStep(project, { action: 'draft', chapter: 1 }, ctx)).project;
+    if (acceptFirst) current = approvePending(current, {}, ctx).project;
+    const result = acceptFirst
+      ? await continueAccepted(current, 'chapter-1-v1', ctx)
+      : await continuePending(current, ctx);
+    const artifact = result.project.artifacts[result.artifactId];
+    assert.equal(artifact.content, 'The door opened.\n\nHiro entered.');
+    assert.equal(artifact.continuityNotes, `${firstNotes}\n\n${nextNotes}`);
+    assert.equal(result.outcome, 'gated');
+    assertValid(result.project);
+  }
+});
+
+test('revising misplaced notes routes supported updates to canon only after approval', async () => {
+  const prose = '# Chapter 1\n\nHiro entered the warehouse.';
+  const notes = '### Threads\n\n**New Threads Introduced:**\n\n- Who is Hiro?';
+  const { project, ctx, calls } = await started([
+    good(`${prose}\n\n${notes}`),
+    good(prose, { proposed_changes: { plot: { loose_threads: ['Who is Hiro?'] } } }),
+  ]);
+  const initial = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  const revised = await modifyPending(initial.project, { notes: 'Reconcile the separated notes with the story bible.' }, ctx);
+  const artifact = revised.project.artifacts[revised.artifactId];
+  assert.equal(artifact.continuityNotes, undefined);
+  assert.equal(artifact.content, prose);
+  assert.match(calls.at(-1).prompt, /Separated continuity notes/);
+  assert.deepEqual(revised.project.state.plot.loose_threads, []);
+  const approved = approvePending(revised.project, {}, ctx).project;
+  assert.deepEqual(approved.state.plot.loose_threads, ['Who is Hiro?']);
+  assert.equal(approved.artifacts[initial.artifactId].continuityNotes, notes, 'the earlier version preserves the raw notes');
+  assertValid(approved);
+});
 
 test('start initializes from the concept without guessing or drafting', async () => {
   const { project, calls } = await started();
