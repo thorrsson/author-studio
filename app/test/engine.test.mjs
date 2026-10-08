@@ -22,7 +22,7 @@ import {
   updateBrief,
 } from '../src/core/engine.js';
 import { validateSnapshot } from '../src/core/state.js';
-import { good, makeCtx, respond, template } from './helpers.mjs';
+import { COMPACT, good, makeCtx, respond, template } from './helpers.mjs';
 
 const START = JSON.stringify({ title: 'The Bell of Kilmore', genre: 'historical mystery', brief: '- Form: novel\n- Unit: chapter' });
 
@@ -125,15 +125,111 @@ test('blocks other steps while a gate is pending', async () => {
   assert.throws(() => rejectPending(project), assertCode('no-gate'));
 });
 
-test('a missing assessment is unassessed and gated', async () => {
+test('a missing assessment is recovered without changing the artifact', async () => {
   const { project, ctx } = await started();
-  ctx.generate = makeCtx(['# Setting\n\nJust prose, no assessment.']).ctx.generate;
-  const { project: gated, outcome } = await runStep(project, { action: 'world' }, ctx);
-  assert.equal(outcome, 'gated');
-  assert.equal(gated.state.pending_review.confidence, null);
-  assert.match(gated.state.pending_review.flags[0], /unassessed/);
-  assert.equal(gated.state.orchestrator_log.at(-1).confidence, null);
-  assertValid(gated);
+  project.state.lore.tech_level = 'Rural 1920s Ireland';
+  const { ctx: recoveryCtx, calls } = makeCtx([
+    '# Setting\n\nJust prose, no assessment.',
+    good('Assessment', { confidence: 0.9, rationale: 'Fits the brief.' }),
+  ]);
+  const result = await runStep(project, { action: 'world', notes: 'Keep the village realistic.' }, recoveryCtx);
+  const artifact = result.project.artifacts['world-1'];
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(artifact.content, '# Setting\n\nJust prose, no assessment.');
+  assert.equal(artifact.confidence, 0.9);
+  assert.equal(artifact.assessed, true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /Complete artifact \(world-1\)/);
+  assert.match(calls[1].prompt, /Keep the village realistic/);
+  assert.match(calls[1].prompt, /Creative brief/);
+  assert.match(calls[1].prompt, /Rural 1920s Ireland/);
+  assert.match(calls[1].system, /Do not rewrite, edit, continue/);
+  assertValid(result.project);
+});
+
+test('recovery supports every worker role and preserves assessment review gates', async () => {
+  const { project } = await started();
+  const steps = [
+    { action: 'research' },
+    { action: 'world' },
+    { action: 'plot' },
+    { action: 'draft', chapter: 1 },
+  ];
+  let current = project;
+  for (const step of steps) {
+    const original = step.action === 'research'
+      ? good('Artifact for research with an unusable rating.', { confidence: 'unusable' })
+      : `Artifact for ${step.action}, no assessment.`;
+    const { ctx, calls } = makeCtx([
+      original,
+      good('Assessment', { confidence: 0.9 }),
+    ]);
+    const result = await runStep(current, step, ctx);
+    assert.equal(result.outcome, 'accepted', step.action);
+    assert.equal(calls.length, 2, step.action);
+    current = result.project;
+  }
+  const { ctx: editCtx, calls } = makeCtx([
+    '# Chapter 1\n\nEdited prose without an assessment.',
+    good('Assessment', { confidence: 0.5, contradictions: ['The new setting conflicts with accepted canon.'] }),
+  ]);
+  const edited = await runStep(current, { action: 'edit', target: 'chapter-1-v1', notes: 'Preserve the character voice.' }, editCtx);
+  assert.equal(edited.outcome, 'gated');
+  assert.equal(edited.project.artifacts['chapter-1-v2'].confidence, 0.5);
+  assert.equal(edited.project.artifacts['chapter-1-v2'].content, '# Chapter 1\n\nEdited prose without an assessment.');
+  assert.ok(edited.project.state.pending_review.flags.some((flag) => /contradiction/i.test(flag)));
+  assert.match(calls[1].prompt, /Preserve the character voice/);
+  assertValid(edited.project);
+});
+
+test('unusable recovery ratings preserve text and retain incomplete-text gates', async () => {
+  const { project } = await started();
+  const { ctx, calls } = makeCtx([
+    { text: '# Chapter 1\n\nThe story stops here.', finishReason: 'length' },
+    good('Assessment', { confidence: null }),
+  ]);
+  const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  const artifact = result.project.artifacts['chapter-1-v1'];
+  assert.equal(result.outcome, 'gated');
+  assert.equal(artifact.content, '# Chapter 1\n\nThe story stops here.');
+  assert.equal(artifact.assessed, false);
+  assert.equal(artifact.complete, false);
+  assert.equal(calls.length, 2);
+  assert.ok(result.project.state.pending_review.flags.some((flag) => /usable confidence rating/.test(flag)));
+  assert.ok(result.project.state.pending_review.flags.some((flag) => /length limit/.test(flag)));
+  assertValid(result.project);
+});
+
+test('failed or oversized assessment recovery preserves the candidate for review', async () => {
+  const { project } = await started();
+  const providerFailure = makeCtx([
+    'The text is intact.',
+    async () => { throw new Error('provider unavailable'); },
+  ]);
+  const failed = await runStep(project, { action: 'research' }, providerFailure.ctx);
+  assert.equal(failed.outcome, 'gated');
+  assert.equal(failed.project.artifacts['research-1'].content, 'The text is intact.');
+  assert.ok(failed.project.state.pending_review.flags.some((flag) => /follow-up failed/.test(flag)));
+  assert.equal(providerFailure.calls.length, 2);
+
+  const oversizedText = `# Chapter 1\n\n${'A sentence. '.repeat(10000)}`;
+  const oversized = makeCtx([oversizedText], { profile: COMPACT });
+  const tooLong = await runStep(project, { action: 'draft', chapter: 1 }, oversized.ctx);
+  assert.equal(tooLong.outcome, 'gated');
+  assert.equal(tooLong.project.artifacts['chapter-1-v1'].content, oversizedText.trim());
+  assert.ok(tooLong.project.state.pending_review.flags.some((flag) => /context limit/.test(flag)));
+  assert.equal(oversized.calls.length, 1, 'no follow-up is sent when the complete artifact cannot fit');
+});
+
+test('cancelling assessment recovery does not persist the candidate', async () => {
+  const { project } = await started();
+  const { ctx } = makeCtx([
+    'Candidate prose.',
+    async () => { throw Object.assign(new Error('cancelled'), { name: 'AbortError' }); },
+  ]);
+  await assert.rejects(runStep(project, { action: 'world' }, ctx), assertCode('cancelled'));
+  assert.equal(project.artifacts['world-1'], undefined);
+  assert.equal(project.gate, null);
 });
 
 test('contradictions need explicit confirmation before approval', async () => {
@@ -192,6 +288,22 @@ test('MODIFY revises with the originating worker and always re-gates', async () 
   assert.deepEqual(approved.project.state.plot.act_beats, ['Theft', 'Search']);
 });
 
+test('revised candidates recover missing assessments with the author notes', async () => {
+  const { project } = await started();
+  const pending = await runStep(project, { action: 'plot' }, makeCtx([good('Plan v1', { confidence: 0.4 })]).ctx);
+  const { ctx, calls } = makeCtx([
+    'Plan v2 without an assessment.',
+    good('Assessment', { confidence: 0.9 }),
+  ]);
+  const revised = await modifyPending(pending.project, { notes: 'Move the theft earlier.' }, ctx);
+  assert.equal(revised.outcome, 'gated', 'requested revisions always return to review');
+  assert.equal(revised.project.artifacts['plot-1-v2'].content, 'Plan v2 without an assessment.');
+  assert.equal(revised.project.artifacts['plot-1-v2'].confidence, 0.9);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /Move the theft earlier/);
+  assertValid(revised.project);
+});
+
 test('REJECT restores the previous status and keeps accepted canon', async () => {
   const { project, ctx } = await started();
   ctx.generate = makeCtx([
@@ -234,7 +346,10 @@ test('an unfinished draft is gated and never marked complete by approval', async
   assert.match(approved.project.state.orchestrator_log.at(-1).action, /unfinished and not marked complete/);
   assertValid(approved.project);
 
-  const { ctx: continueCtx, calls } = makeCtx([good('pulled the rope. The end.', { confidence: 0.9, proposed_changes: { lore: { timeline_log: ['The bell rings again'] } } })]);
+  const { ctx: continueCtx, calls } = makeCtx([
+    'pulled the rope. The end.',
+    good('Assessment', { confidence: 0.9, proposed_changes: { lore: { timeline_log: ['The bell rings again'] } } }),
+  ]);
   const continued = await continueAccepted(approved.project, 'chapter-1-v1', continueCtx);
   assert.equal(continued.outcome, 'accepted');
   assert.equal(continued.artifactId, 'chapter-1-v2');
@@ -244,6 +359,8 @@ test('an unfinished draft is gated and never marked complete by approval', async
   assert.deepEqual(continued.project.state.draft_progress.completed_chapters, [1]);
   assert.deepEqual(continued.project.state.lore.timeline_log, ['The bell rings again']);
   assert.match(calls[0].prompt, /Continue from exactly where it stops/);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /Nora climbed the tower and pulled the rope\. The end\./);
   assertValid(continued.project);
 });
 
@@ -252,7 +369,10 @@ test('continuing a pending draft extends it in place and re-gates', async () => 
   ctx.generate = makeCtx([{ text: good('# Chapter 1\n\nThe first half.', { complete: false, proposed_changes: { characters: [{ name: 'Nora' }] } }), finishReason: 'stop' }]).ctx.generate;
   const gated = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
   assert.match(gated.project.state.pending_review.flags.join(' '), /reported that the text is unfinished/);
-  const { ctx: continueCtx } = makeCtx([good('The first half.\n\nThe second half.', { confidence: 0.95, proposed_changes: { characters: [{ name: 'Liam' }] } })]);
+  const { ctx: continueCtx, calls } = makeCtx([
+    'The first half.\n\nThe second half.',
+    good('Assessment', { confidence: 0.95, proposed_changes: { characters: [{ name: 'Liam' }] } }),
+  ]);
   const continued = await continuePending(gated.project, continueCtx);
   assert.equal(continued.outcome, 'gated');
   assert.equal(continued.artifactId, 'chapter-1-v1');
@@ -262,6 +382,8 @@ test('continuing a pending draft extends it in place and re-gates', async () => 
   assert.equal(artifact.continuations, 1);
   assert.deepEqual(artifact.proposedChanges.characters.map((character) => character.name), ['Nora', 'Liam']);
   assert.equal(continued.project.state.pending_review.artifact.content, artifact.content);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].prompt, /The first half\.\n\nThe second half/);
   assertValid(continued.project);
   const approved = approvePending(continued.project, {}, ctx);
   assert.deepEqual(approved.project.state.draft_progress.completed_chapters, [1]);

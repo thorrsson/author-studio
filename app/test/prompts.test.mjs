@@ -3,6 +3,7 @@ import test from 'node:test';
 import { estimateTokens, fitText, inputBudget, outputReserve, requestMaxTokens } from '../src/core/budget.js';
 import { runStep, startProject } from '../src/core/engine.js';
 import {
+  buildAssessmentPrompt,
   buildConsolidationPrompt,
   buildReviewerPrompt,
   buildStartPrompt,
@@ -81,6 +82,47 @@ test('compact prompts fit a 4K on-device model and report shortened context', as
   assert.match(request.prompt, /room for about [\d,]+ words/);
   assert.doesNotMatch(request.prompt, /\u27e6/);
   assert.match(request.prompt, /End of unit 1/);
+});
+
+test('assessment prompts include the whole artifact, brief, canon, and notes', async () => {
+  const current = await project([
+    { request: { action: 'world' }, response: good('The village setting.', { proposed_changes: { lore: { tech_level: 'Rural 1920s Ireland' } } }) },
+    { request: { action: 'draft', chapter: 1 }, response: good('# Chapter 1\n\nThe bell rings at dawn.') },
+  ]);
+  const artifact = { ...current.artifacts['chapter-1-v1'], content: '# Chapter 1\n\nThe full chapter text for assessment.' };
+  for (const profile of [FULL, COMPACT]) {
+    const request = buildAssessmentPrompt({
+      project: current,
+      artifact,
+      worker: 'Scene Writer',
+      notes: 'Keep the historical details grounded.',
+      profile,
+    });
+    assert.ok(fits(request, profile));
+    assertBalancedTags(request.prompt);
+    assert.match(request.prompt, /The full chapter text for assessment/);
+    assert.match(request.prompt, /creative brief/i);
+    assert.match(request.prompt, /Rural 1920s Ireland/);
+    assert.match(request.prompt, /Keep the historical details grounded/);
+    assert.match(request.system, /Do not rewrite, edit, continue/);
+    assert.match(request.prompt, new RegExp(ASSESSMENT_HEADING));
+  }
+});
+
+test('draft prompts reserve room for assessments in compact and full contexts', async () => {
+  const current = await project();
+  for (const profile of [FULL, COMPACT]) {
+    const request = buildWorkerPrompt({
+      project: current,
+      mode: 'new',
+      action: 'draft',
+      worker: 'Scene Writer',
+      chapter: 1,
+      profile,
+      resources,
+    });
+    assert.match(request.prompt, /reserve.*assessment JSON/i);
+  }
 });
 
 test('targets that cannot fit are refused instead of silently truncated', async () => {

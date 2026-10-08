@@ -7,6 +7,7 @@ import { applyPatch, detectCanonChanges, isEmptyPatch, mergePatches, normalizePa
 import { countWords, parseAssessment, splitResponse, visibleArtifact } from './parse.js';
 import {
   acceptedOf,
+  buildAssessmentPrompt,
   buildConsolidationPrompt,
   buildReviewerPrompt,
   buildStartPrompt,
@@ -391,6 +392,52 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
   };
 }
 
+async function assessCandidate(project, candidate, { notes, content = candidate.content } = {}, ctx) {
+  if (candidate.confidence !== null && candidate.confidence !== undefined) return candidate;
+  const failed = (reason) => ({
+    ...candidate,
+    assessed: false,
+    assessmentError: 'invalid',
+    flags: dedupe([...candidate.flags, reason]),
+  });
+  let response;
+  try {
+    const prompt = buildPrompt(buildAssessmentPrompt, {
+      project,
+      artifact: { ...candidate, content },
+      worker: candidate.worker,
+      notes,
+      profile: ctx.profile,
+    }, ctx);
+    response = await callModel(ctx, prompt);
+  } catch (error) {
+    if (error.code === 'cancelled') throw error;
+    return failed(error.code === 'too-long' || error.code === 'too-large' || error.code === 'context'
+      || /context (?:length|window|limit)|too many tokens|prompt is too long/i.test(error.message ?? '')
+      ? 'The full artifact and assessment context exceed the model\'s context limit; human review is needed.'
+      : 'The assessment follow-up failed; human review is needed.');
+  }
+  const assessment = parseAssessment(response.text);
+  if (assessment.confidence === null) {
+    return failed('The assessment follow-up did not provide a usable confidence rating; human review is needed.');
+  }
+  const { patch, notes: patchNotes } = normalizePatch(assessment.proposedChanges);
+  return {
+    ...candidate,
+    assessed: true,
+    assessmentError: null,
+    confidence: assessment.confidence,
+    rationale: assessment.rationale || candidate.rationale,
+    flags: dedupe([...candidate.flags, ...assessment.flags, ...patchNotes]),
+    contradictions: dedupe([...candidate.contradictions, ...assessment.contradictions]),
+    complete: candidate.complete && assessment.complete !== false,
+    summary: assessment.summary || candidate.summary,
+    changeSummary: assessment.changeSummary || candidate.changeSummary,
+    unresolved: assessment.unresolved.length ? assessment.unresolved : candidate.unresolved,
+    proposedChanges: mergePatches(candidate.proposedChanges, patch),
+  };
+}
+
 export async function startProject(input, template, ctx = {}) {
   const concept = cleanText(input?.concept, LIMITS.concept, 'The story idea');
   if (!concept) throw new EngineError('invalid-input', 'Describe your story idea to start a project.');
@@ -482,9 +529,10 @@ export async function runStep(project, request, ctx) {
     resources: ctx.resources,
   }, ctx);
   const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text)));
-  const candidate = candidateFrom(response, {
+  const rawCandidate = candidateFrom(response, {
     id, type, worker: action.worker, chapter, sourceId: target?.id, notes, ctx, contextNotes: prompt.contextNotes,
   });
+  const candidate = await assessCandidate(project, rawCandidate, { notes }, ctx);
   return settle(project, candidate, { step: request.action, ctx });
 }
 
@@ -571,7 +619,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile: ctx.profile, resources,
   }, ctx);
   const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value)));
-  const candidate = candidateFrom(response, {
+  const rawCandidate = candidateFrom(response, {
     id,
     type: current.type,
     worker,
@@ -582,6 +630,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     ctx,
     contextNotes: prompt.contextNotes,
   });
+  const candidate = await assessCandidate(project, rawCandidate, { notes: text }, ctx);
   return regate(project, current, candidate, {
     gate,
     ctx,
@@ -615,10 +664,11 @@ async function continuation(project, current, ctx) {
     project, mode: 'continue', worker: current.worker, chapter: current.chapter, target: current, profile: ctx.profile, resources: ctx.resources,
   }, ctx);
   const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value))));
-  const addition = candidateFrom(response, {
+  const rawAddition = candidateFrom(response, {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });
-  const content = joinContinuation(current.content, addition.content);
+  const content = joinContinuation(current.content, rawAddition.content);
+  const addition = await assessCandidate(project, rawAddition, { notes: current.notes, content }, ctx);
   return { addition, content, added: countWords(content) - countWords(current.content) };
 }
 
