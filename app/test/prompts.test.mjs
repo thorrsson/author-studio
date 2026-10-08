@@ -63,6 +63,34 @@ test('full prompts carry the shared worker guide and the response contract', asy
   assert.ok(fits(request, FULL));
 });
 
+test('all chapter operations keep manuscript and structured continuity updates separate', async () => {
+  const current = await project([{ request: { action: 'draft', chapter: 1 }, response: good('# Chapter 1\n\nThe oven hummed.') }]);
+  const target = current.artifacts['chapter-1-v1'];
+  for (const profile of [FULL, COMPACT]) {
+    for (const mode of ['new', 'edit', 'revise', 'continue']) {
+      const request = buildWorkerPrompt({
+        project: current, mode, action: 'draft', worker: mode === 'edit' ? 'Editor' : 'Scene Writer',
+        chapter: 2, target: mode === 'new' ? undefined : target, profile, resources,
+      });
+      assert.match(request.prompt, /chapter artifact must contain manuscript text only/);
+      assert.match(request.prompt, /plot\.loose_threads/);
+      assert.match(request.prompt, /plot\.resolved_threads/);
+      assert.match(request.prompt, /lore\.timeline_log/);
+      assert.match(request.prompt, /planned actions in plot\.act_beats/);
+      assert.match(request.prompt, /possibly Hiro.*remains open, not resolved/);
+      assert.ok(fits(request, profile));
+    }
+  }
+  const request = buildWorkerPrompt({
+    project: current, mode: 'revise', worker: 'Scene Writer',
+    target: { ...target, continuityNotes: '### Threads\n**New Threads Introduced:**\n- Who took the bread?' },
+    profile: FULL, resources,
+  });
+  assert.match(request.prompt, /Separated continuity notes \(proposals, not accepted canon\)/);
+  assert.match(request.prompt, /Who took the bread/);
+  assert.match(request.prompt, /Include supported updates in proposed_changes/);
+});
+
 test('compact prompts fit a 4K on-device model and report shortened context', async () => {
   const longChapter = `# Chapter 1\n\n${'The oven hummed while flour drifted through the light. '.repeat(400)}`;
   const current = await project([

@@ -57,6 +57,22 @@ The first version with this updater must be installed manually; older
 versions cannot update themselves. Update checks contact GitHub, not your AI
 provider, and do not send project text or API keys.
 
+## Manuscript and continuity notes
+
+Chapters contain manuscript text only. Thread updates, actual timeline events,
+and planned story beats are submitted separately and enter the **Story bible**
+only when the chapter is accepted. **Chapter updates** retains the submitted
+updates by chapter, including thread resolutions.
+
+If a model appends a recognizable list of thread or scene-timeline notes to a
+chapter, the app preserves it under **Separated planning notes** and asks for
+review. These notes are excluded from chapter word counts, copying, and
+manuscript exports; they are not automatically converted into canon. Request
+changes to reconcile them with the structured Story bible updates before
+approving. Full project backups retain the notes. Previously saved chapters
+are not rewritten automatically; revise an affected chapter to separate its
+notes while keeping its old version in History.
+
 ## Choosing an AI model
 
 The first screen asks you to connect a model. You can change this later in

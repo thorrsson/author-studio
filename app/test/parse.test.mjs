@@ -6,11 +6,48 @@ import {
   extractJsonObject,
   parseAssessment,
   splitResponse,
+  splitChapterNotes,
   stripThinking,
   toConfidence,
   visibleArtifact,
 } from '../src/core/parse.js';
 import { respond } from './helpers.mjs';
+
+const CHAPTER_NOTES = `### Threads
+
+**Resolved Threads (based on this chapter):**
+
+- *TechCorp's connection to the warehouse* - Confirmed as a front.
+
+**New Threads Introduced (by this chapter):**
+
+- *Hiro's knowledge* - Can he be trusted?
+
+### Changes to the scene timeline
+
+- **Beats for Unit 7:**
+    - Infiltrate the mainframe room
+    - Discover the containment field`;
+
+test('separates a structured chapter appendix without losing its notes', () => {
+  const prose = '# Chapter 7\n\nHiro closed the door.';
+  const result = splitChapterNotes(`${prose}\n\n---\n\n${CHAPTER_NOTES}`);
+  assert.equal(result.content, prose);
+  assert.equal(result.continuityNotes, CHAPTER_NOTES);
+  const timeline = CHAPTER_NOTES.slice(CHAPTER_NOTES.indexOf('### Changes'));
+  assert.deepEqual(splitChapterNotes(`${prose}\n\n${timeline}`), { content: prose, continuityNotes: timeline });
+});
+
+test('keeps ordinary story headings, lists, and ambiguous text in the chapter', () => {
+  for (const content of [
+    '# Chapter 1\n\n### Threads\n\nShe pulled a thread from her sleeve.',
+    '# Chapter 1\n\n### Threads\n\n- Red\n- Blue',
+    `# Chapter 1\n\n${CHAPTER_NOTES}\n\nHiro walked away.`,
+    '# Chapter 1\n\n```markdown\n### Threads\n**Resolved Threads:**\n- A thread\n```',
+  ]) {
+    assert.deepEqual(splitChapterNotes(content), { content, continuityNotes: '' });
+  }
+});
 
 test('splits an artifact from its fenced assessment', () => {
   const raw = respond('# Chapter 1\n\nThe rain kept on.', { confidence: 0.82, flags: ['pacing'], contradictions: [], complete: true });

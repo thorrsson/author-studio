@@ -4,7 +4,7 @@
 // returns a new project object and never mutates its input.
 import { artifactLabel, formatConfidence, isSafeArtifactId, parseArtifactId } from './labels.js';
 import { applyPatch, detectCanonChanges, isEmptyPatch, mergePatches, normalizePatch, normKey } from './patch.js';
-import { countWords, parseAssessment, splitResponse, visibleArtifact } from './parse.js';
+import { countWords, parseAssessment, splitChapterNotes, splitResponse, visibleArtifact } from './parse.js';
 import {
   acceptedOf,
   buildConsolidationPrompt,
@@ -196,6 +196,9 @@ function patchSummary(patch) {
 
 function gateReasonsFor(artifact) {
   const reasons = [];
+  if (artifact.continuityNotes) {
+    reasons.push('Planning notes were separated from the manuscript. Review them alongside the proposed story bible updates; request changes to reconcile any missing or uncertain updates.');
+  }
   if (!artifact.assessed) {
     reasons.push(artifact.assessmentError === 'invalid'
       ? 'The model\'s self-assessment could not be read, so confidence is unassessed.'
@@ -353,7 +356,8 @@ function buildPrompt(builder, args, ctx) {
 }
 
 function candidateFrom(response, { id, type, worker, chapter, sourceId, revisionOf, notes, ctx, contextNotes = [] }) {
-  const { artifact: content, assessmentText } = splitResponse(response.text);
+  const { artifact, assessmentText } = splitResponse(response.text);
+  const { content, continuityNotes } = type === 'chapter' ? splitChapterNotes(artifact) : { content: artifact, continuityNotes: '' };
   if (!content.trim()) {
     throw new EngineError('empty-response', 'The model returned no usable text. Try again, or choose a different model in Settings.');
   }
@@ -370,6 +374,7 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
     ...(isPositiveInteger(chapter) ? { chapter } : {}),
     status: 'candidate',
     content,
+    ...(continuityNotes ? { continuityNotes } : {}),
     words: countWords(content),
     assessed: assessment.ok,
     assessmentError: assessment.error,
@@ -481,7 +486,7 @@ export async function runStep(project, request, ctx) {
     profile: ctx.profile,
     resources: ctx.resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text)));
+  const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text, { chapter: type === 'chapter' })));
   const candidate = candidateFrom(response, {
     id, type, worker: action.worker, chapter, sourceId: target?.id, notes, ctx, contextNotes: prompt.contextNotes,
   });
@@ -570,7 +575,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
   const prompt = buildPrompt(buildWorkerPrompt, {
     project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile: ctx.profile, resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value)));
+  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value, { chapter: current.type === 'chapter' })));
   const candidate = candidateFrom(response, {
     id,
     type: current.type,
@@ -614,7 +619,7 @@ async function continuation(project, current, ctx) {
   const prompt = buildPrompt(buildWorkerPrompt, {
     project, mode: 'continue', worker: current.worker, chapter: current.chapter, target: current, profile: ctx.profile, resources: ctx.resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value))));
+  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value, { chapter: current.type === 'chapter' }))));
   const addition = candidateFrom(response, {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });
@@ -636,6 +641,7 @@ export async function continuePending(project, ctx = {}) {
   const updated = {
     ...structuredClone(current),
     content,
+    continuityNotes: [current.continuityNotes, addition.continuityNotes].filter(Boolean).join('\n\n'),
     words: countWords(content),
     assessed: addition.assessed,
     assessmentError: addition.assessmentError,
@@ -678,6 +684,7 @@ export async function continueAccepted(project, artifactId, ctx = {}) {
     version: parsed.version,
     worker,
     content,
+    continuityNotes: [current.continuityNotes, addition.continuityNotes].filter(Boolean).join('\n\n'),
     words: countWords(content),
     summary: addition.summary || current.summary,
     sourceId: current.id,
@@ -992,6 +999,7 @@ function validArtifact(artifact, id) {
     && isSafeArtifactId(artifact.base)
     && typeof artifact.type === 'string'
     && typeof artifact.content === 'string'
+    && (artifact.continuityNotes === undefined || typeof artifact.continuityNotes === 'string')
     && typeof artifact.worker === 'string'
     && ARTIFACT_STATUSES.includes(artifact.status)
     && (artifact.confidence === null || artifact.confidence === undefined || (typeof artifact.confidence === 'number' && artifact.confidence >= 0 && artifact.confidence <= 1));

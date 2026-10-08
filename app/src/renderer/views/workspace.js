@@ -243,6 +243,14 @@ function bulletList(title, items, className) {
   return h('div', { class: ['detail-block', className] }, h('h3', null, title), h('ul', null, items.map((item) => h('li', null, item))));
 }
 
+function continuityNotesPanel(artifact) {
+  if (!artifact.continuityNotes) return null;
+  return h('details', { class: 'detail-block' },
+    h('summary', null, 'Separated planning notes'),
+    h('p', { class: 'muted small' }, 'Preserved outside the manuscript. These notes are not automatically canon; only the structured story bible updates are applied on approval.'),
+    renderMarkdown(artifact.continuityNotes));
+}
+
 function artifactMeta(artifact) {
   const parts = [artifact.worker === 'Author' ? 'Written by you' : artifact.worker];
   if (artifact.model) parts.push(artifact.model);
@@ -269,6 +277,7 @@ export function openArtifact(project, artifactId) {
       bulletList('Things to check', artifact.flags),
       artifact.notes ? h('p', { class: 'muted small' }, `Your notes: ${artifact.notes}`) : null,
       h('div', { class: 'artifact-body' }, renderMarkdown(artifact.content)),
+      continuityNotesPanel(artifact),
     ],
   });
   modal.setActions([
@@ -582,6 +591,7 @@ function reviewCard(project) {
     bulletList('Things to check', artifact.flags),
     bulletList('Problems this revision did not fix', artifact.unresolved),
     bulletList('If you approve, the story bible gains', patchLines, 'patch'),
+    continuityNotesPanel(artifact),
     artifact.complete === false ? h('div', { class: 'callout callout-warning' }, 'This text is unfinished. Continue writing to extend it, or approve it as it is and continue later.') : null,
     h('div', { class: 'review-text' }, renderMarkdown(artifact.content)),
     reviews.length ? h('div', { class: 'detail-block' },
@@ -761,6 +771,7 @@ function lastResultPanel(project) {
       artifact.worker === 'Author' ? null : confidenceMeter(artifact)),
     artifact.type === 'chapter' && artifact.complete === false ? h('div', { class: 'callout callout-warning' }, 'This text is unfinished. You can continue it at any time.') : null,
     h('div', { class: 'result-text' }, renderMarkdown(artifact.content)),
+    continuityNotesPanel(artifact),
     h('div', { class: 'button-row' },
       h('button', { class: 'btn', type: 'button', onclick: () => openArtifact(project, artifact.id) }, 'Open'),
       h('button', { class: 'btn', type: 'button', disabled: state.runs.has(project.id), onclick: () => prepareEdit(project, artifact) }, 'Revise…'),
@@ -839,9 +850,10 @@ function bibleSection(title, hint, content) {
 
 function bibleTab(project) {
   const { lore, plot, characters } = project.state;
+  const chapterUpdates = acceptedChapters(project).filter((item) => item.continuityNotes || describePatch(item.proposedChanges).length);
   const documents = accepted(project).filter((item) => ['research', 'world', 'plot'].includes(item.type)).sort((a, b) => String(a.acceptedAt).localeCompare(String(b.acceptedAt)));
   const empty = !characters.length && !lore.tech_level && !lore.magic_system && !lore.key_factions.length && !lore.timeline_log.length
-    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length;
+    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length && !chapterUpdates.length;
   if (empty) {
     return h('div', { class: 'empty-state' },
       h('h2', null, 'The story bible is empty'),
@@ -863,6 +875,11 @@ function bibleTab(project) {
     plot.act_beats.length ? bibleSection('Story beats', null, textList(plot.act_beats, true)) : null,
     plot.loose_threads.length ? bibleSection('Open threads', 'Questions and promises the story still needs to pay off.', textList(plot.loose_threads)) : null,
     plot.twist_map.length ? bibleSection('Twists and reveals', null, textList(plot.twist_map)) : null,
+    chapterUpdates.length ? bibleSection('Chapter updates', 'Updates submitted with each accepted chapter, including thread resolutions. Earlier versions remain in History.',
+      chapterUpdates.map((item) => h('details', { class: 'detail-block' },
+        h('summary', null, artifactLabel(item)),
+        bulletList('Submitted story bible updates', describePatch(item.proposedChanges)),
+        continuityNotesPanel(item)))) : null,
     documents.length ? bibleSection('Planning documents', null, h('ul', { class: 'plain-list' }, documents.map((item) => h('li', null, h('button', { class: 'link-button', type: 'button', onclick: () => openArtifact(project, item.id) }, artifactLabel(item)), h('span', { class: 'muted small' }, ` · ${plural(item.words ?? 0, 'word')}`))))) : null,
   ];
 }
