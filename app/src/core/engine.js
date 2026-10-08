@@ -429,7 +429,7 @@ async function recoverAssessment(project, candidate, ctx) {
     summary: assessment.summary || candidate.summary,
     changeSummary: assessment.changeSummary || candidate.changeSummary,
     unresolved: dedupe([...candidate.unresolved, ...assessment.unresolved]),
-    proposedChanges: mergePatches(candidate.proposedChanges, patch),
+    proposedChanges: patch,
   };
 }
 
@@ -661,7 +661,7 @@ async function continuation(project, current, ctx) {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });
   const content = joinContinuation(current.content, addition.content);
-  const assessed = await recoverAssessment(project, { ...addition, content }, ctx);
+  const assessed = await recoverAssessment(project, { ...addition, content, notes: current.notes }, ctx);
   return { addition: { ...assessed, content: addition.content }, content, added: countWords(content) - countWords(current.content) };
 }
 

@@ -190,7 +190,23 @@ test('assessment recovery preserves existing concerns and incomplete status', as
   assert.equal(result.outcome, 'gated');
   assert.equal(artifact.complete, false);
   assert.deepEqual(artifact.contradictions, ['Existing conflict.']);
-  assert.deepEqual(artifact.proposedChanges.lore.timeline_log, ['Original event', 'New event']);
+  assert.deepEqual(artifact.proposedChanges.lore.timeline_log, ['New event']);
+});
+
+test('recovered assessments replace stale canon proposals before automatic acceptance', async () => {
+  const { project } = await started();
+  for (const proposed_changes of [{}, { lore: { timeline_log: ['Recovered event'] } }]) {
+    const { ctx } = makeCtx([
+      good('Draft text.', { confidence: null, proposed_changes: { lore: { timeline_log: ['Stale event'] }, characters: [{ name: 'Stale character' }] } }),
+      good('', { proposed_changes }),
+    ]);
+    const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+    assert.equal(result.outcome, 'accepted');
+    assert.deepEqual(result.project.artifacts[result.artifactId].proposedChanges, proposed_changes);
+    assert.deepEqual(result.project.state.lore.timeline_log, proposed_changes.lore?.timeline_log ?? []);
+    assert.deepEqual(result.project.state.characters, []);
+    assertValid(result.project);
+  }
 });
 
 test('never accepts a truncated or incomplete assessment follow-up', async () => {
@@ -241,19 +257,28 @@ test('cancelling recovery still cancels the operation without changing the proje
 
 test('MODIFY and continuations recover assessments but preserve the pending gate', async () => {
   const { project } = await started();
-  const gated = await runStep(project, { action: 'draft', chapter: 1 }, makeCtx([good('First half.', { complete: false })]).ctx);
+  const gated = await runStep(project, { action: 'draft', chapter: 1, notes: 'Keep the ending quiet.' }, makeCtx([good('First half.', {
+    complete: false, proposed_changes: { lore: { timeline_log: ['Prior event'] } },
+  })]).ctx);
   const modified = await modifyPending(gated.project, { notes: 'Make it clearer.' }, makeCtx(['Revised text.', good('')]).ctx);
   assert.equal(modified.outcome, 'gated');
   assert.equal(modified.project.state.pending_review.confidence, 0.9);
-  const { ctx, calls } = makeCtx(['Second half.', good('')]);
+  const { ctx, calls } = makeCtx([
+    good('Second half.', { confidence: null, proposed_changes: { lore: { timeline_log: ['Stale continuation event'] } } }),
+    good('', { proposed_changes: { lore: { timeline_log: ['Recovered continuation event'] } } }),
+  ]);
   const continued = await continuePending(gated.project, ctx);
   assert.equal(continued.outcome, 'gated');
   assert.equal(continued.project.state.pending_review.confidence, 0.9);
   assert.ok(calls[1].prompt.includes('First half.\n\nSecond half.'));
+  assert.ok(calls[1].prompt.includes('Keep the ending quiet.'));
+  assert.deepEqual(continued.project.artifacts[continued.artifactId].proposedChanges.lore.timeline_log, ['Prior event', 'Recovered continuation event']);
   const approved = approvePending(gated.project);
-  const finished = await continueAccepted(approved.project, gated.artifactId, makeCtx(['Second half.', good('')]).ctx);
+  const { ctx: acceptedCtx, calls: acceptedCalls } = makeCtx(['Second half.', good('')]);
+  const finished = await continueAccepted(approved.project, gated.artifactId, acceptedCtx);
   assert.equal(finished.outcome, 'accepted');
   assert.equal(finished.project.artifacts[finished.artifactId].content, 'First half.\n\nSecond half.');
+  assert.ok(acceptedCalls[1].prompt.includes('Keep the ending quiet.'));
 });
 
 test('sequential YOLO drafts can continue after a missing rating is recovered', async () => {
