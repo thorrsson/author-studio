@@ -245,11 +245,14 @@ function bulletList(title, items, className) {
 }
 
 function continuityNotesPanel(artifact) {
-  if (!artifact.continuityNotes) return null;
+  const notes = artifact.continuityNotes && artifact.continuityNotes !== artifact.separatedNotes
+    ? artifact.continuityNotes
+    : null;
+  if (!notes) return null;
   return h('details', { class: 'detail-block' },
     h('summary', null, 'Separated planning notes'),
     h('p', { class: 'muted small' }, 'Preserved outside the manuscript. These notes are not automatically canon; only the structured story bible updates are applied on approval.'),
-    renderMarkdown(artifact.continuityNotes));
+    renderMarkdown(notes));
 }
 
 function artifactMeta(artifact) {
@@ -277,6 +280,7 @@ export function openArtifact(project, artifactId) {
       artifact.rationale ? h('p', { class: 'muted' }, artifact.rationale) : null,
       bulletList('Things to check', artifact.flags),
       artifact.notes ? h('p', { class: 'muted small' }, `Your notes: ${artifact.notes}`) : null,
+      artifact.separatedNotes ? h('div', { class: 'detail-block' }, h('h3', null, 'Separated planning notes'), renderMarkdown(artifact.separatedNotes)) : null,
       h('div', { class: 'artifact-body' }, renderMarkdown(artifact.content)),
       continuityNotesPanel(artifact),
     ],
@@ -623,6 +627,7 @@ function reviewCard(project) {
     bulletList('Things to check', artifact.flags),
     bulletList('Problems this revision did not fix', artifact.unresolved),
     bulletList('If you approve, the story bible gains', patchLines, 'patch'),
+    artifact.separatedNotes ? h('div', { class: 'detail-block' }, h('h3', null, 'Separated planning notes · review before accepting'), renderMarkdown(artifact.separatedNotes)) : null,
     continuityNotesPanel(artifact),
     artifact.complete === false ? h('div', { class: 'callout callout-warning' }, 'This text is unfinished. Continue writing to extend it, or approve it as it is and continue later.') : null,
     h('div', { class: 'review-text' }, renderMarkdown(artifact.content)),
@@ -880,12 +885,31 @@ function bibleSection(title, hint, content) {
   return h('section', { class: 'bible-section' }, h('h3', null, title), hint ? h('p', { class: 'hint' }, hint) : null, content);
 }
 
+function chapterUpdatesSection(updates) {
+  if (!updates.length) return null;
+  return bibleSection('Chapter updates', 'Accepted proposals from chapter drafts, kept separate from manuscript prose.', h('ul', { class: 'plain-list' }, updates.map((update) => {
+    const entries = [
+      ...update.actual_events.map((item) => `Actual event: ${toText(item)}`),
+      ...update.open_questions.map((item) => `Open question: ${toText(item)}`),
+      ...update.resolved_threads.map((item) => `Resolved thread: ${toText(item)}`),
+      ...update.planned_beats.map((item) => `Planned beat: ${toText(item)}`),
+    ];
+    return h('li', null,
+      h('strong', null, `Chapter ${update.chapter} · ${update.artifact_id}`),
+      entries.length ? textList(entries) : null,
+      update.separated_notes ? h('div', { class: 'detail-block' }, h('h4', null, 'Separated planning notes'), renderMarkdown(update.separated_notes)) : null);
+  })));
+}
+
 function bibleTab(project) {
   const { lore, plot, characters } = project.state;
   const chapterUpdates = acceptedChapters(project).filter((item) => item.continuityNotes || describePatch(item.proposedChanges).length);
+  const snapshotUpdates = project.state.chapter_updates ?? [];
+  const legacyChapterUpdates = chapterUpdates.filter((item) => !snapshotUpdates.some((update) => update.artifact_id === item.id));
   const documents = accepted(project).filter((item) => ['research', 'world', 'plot'].includes(item.type)).sort((a, b) => String(a.acceptedAt).localeCompare(String(b.acceptedAt)));
   const empty = !characters.length && !lore.tech_level && !lore.magic_system && !lore.key_factions.length && !lore.timeline_log.length
-    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length && !chapterUpdates.length;
+    && !plot.act_beats.length && !plot.loose_threads.length && !plot.twist_map.length && !documents.length
+    && !snapshotUpdates.length && !legacyChapterUpdates.length;
   if (empty) {
     return h('div', { class: 'empty-state' },
       h('h2', null, 'The story bible is empty'),
@@ -909,8 +933,9 @@ function bibleTab(project) {
     plot.act_beats.length ? bibleSection('Story beats', null, textList(plot.act_beats, true)) : null,
     plot.loose_threads.length ? bibleSection('Open threads', 'Questions and promises the story still needs to pay off.', textList(plot.loose_threads)) : null,
     plot.twist_map.length ? bibleSection('Twists and reveals', null, textList(plot.twist_map)) : null,
-    chapterUpdates.length ? bibleSection('Chapter updates', 'Updates submitted with each accepted chapter, including thread resolutions. Earlier versions remain in History.',
-      chapterUpdates.map((item) => h('details', { class: 'detail-block' },
+    chapterUpdatesSection(snapshotUpdates),
+    legacyChapterUpdates.length ? bibleSection('Chapter updates', 'Updates submitted with each accepted chapter, including thread resolutions. Earlier versions remain in History.',
+      legacyChapterUpdates.map((item) => h('details', { class: 'detail-block' },
         h('summary', null, artifactLabel(item)),
         bulletList('Submitted story bible updates', describePatch(item.proposedChanges)),
         continuityNotesPanel(item)))) : null,

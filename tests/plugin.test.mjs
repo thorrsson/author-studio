@@ -78,6 +78,7 @@ test('initial snapshot is empty, complete, and has no pending review', async () 
       current_chapter: '',
       tier2_pending: false,
     },
+    chapter_updates: [],
     orchestrator_log: [],
     pending_review: null,
   });
@@ -120,6 +121,22 @@ test('state output is opt-in without removing tracking or review gates', async (
   assert.match(readme, /\*\*not a state dump\*\*/);
   assert.doesNotMatch(skill, /in every Author Studio response|then the full snapshot|Do not omit the snapshot/);
   assert.doesNotMatch(readme, /Every Author Studio response ends with/);
+});
+
+test('chapter prose stays separate from structured continuity updates', async () => {
+  const [skill, workers, readme, state] = await Promise.all([
+    read(`${skillDir}/SKILL.md`),
+    read(`${skillDir}/references/workers.md`),
+    read('README.md'),
+    json(`${skillDir}/templates/state.json`),
+  ]);
+  assert.deepEqual(state.chapter_updates, []);
+  assert.match(skill, /artifact is\s+manuscript text only/);
+  assert.match(skill, /pending_review\.artifact\.separated_notes/);
+  assert.match(skill, /chapter_updates\.separated_notes/);
+  assert.match(workers, /Return manuscript text only/);
+  assert.match(workers, /Put actual events, open questions, confirmed thread resolutions, and planned beats/);
+  assert.match(readme, /Chapter drafts, revisions, and continuations contain manuscript text only/);
 });
 
 test('fiction contract allows free-form blends and preserves existing projects', async () => {

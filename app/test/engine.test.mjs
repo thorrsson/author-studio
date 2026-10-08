@@ -359,6 +359,37 @@ test('MODIFY and continuations recover assessments but preserve the pending gate
   assert.ok(acceptedCalls[1].prompt.includes('Keep the ending quiet.'));
 });
 
+test('accepted chapter continuations merge their updates without reapplying prior patches', async () => {
+  const { project } = await started();
+  const initial = await runStep(project, { action: 'draft', chapter: 1 }, makeCtx([good('First half.', {
+    complete: false,
+    proposed_changes: {
+      lore: { timeline_log: ['First-half event'] },
+      plot: { loose_threads: ['The key is missing'], act_beats: ['Find the locked room'] },
+    },
+  })]).ctx);
+  const accepted = approvePending(initial.project).project;
+  const { ctx } = makeCtx([good('Second half.', {
+    proposed_changes: {
+      lore: { timeline_log: ['Second-half event'] },
+      plot: { resolved_threads: ['The key is missing'], act_beats: ['Open the locked room'] },
+    },
+  })]);
+  const continued = await continueAccepted(accepted, initial.artifactId, ctx);
+
+  assert.equal(continued.outcome, 'accepted');
+  assert.deepEqual(continued.project.state.chapter_updates, [{
+    chapter: 1,
+    artifact_id: continued.artifactId,
+    actual_events: ['First-half event', 'Second-half event'],
+    open_questions: ['The key is missing'],
+    resolved_threads: ['The key is missing'],
+    planned_beats: ['Find the locked room', 'Open the locked room'],
+    separated_notes: '',
+  }]);
+  assert.deepEqual(continued.project.state.lore.timeline_log, ['First-half event', 'Second-half event']);
+});
+
 test('sequential YOLO drafts can continue after a missing rating is recovered', async () => {
   const { project } = await started();
   const { ctx, calls } = makeCtx(['Chapter one.', good(''), good('Chapter two.')]);
@@ -455,6 +486,60 @@ test('drafts compute progress; model-supplied progress is ignored', async () => 
   await assert.rejects(runStep(project, { action: 'publish' }, ctx), assertCode('invalid-input'));
 });
 
+test('planning appendices are preserved separately and require review before chapter acceptance', async () => {
+  const { project, ctx } = await started();
+  const manuscript = '# Chapter 1\n\nNora reached the tower before dawn.';
+  ctx.generate = makeCtx([good(`${manuscript}\n\n## Thread tracking\n- Who rang the bell?\n- Nora promises to return.`, {
+    proposed_changes: {
+      lore: { timeline_log: ['Nora reaches the tower before dawn.'] },
+      plot: { loose_threads: ['Who rang the bell?'], resolved_threads: ['Who rang the bell?'], act_beats: ['Nora returns to the tower.'] },
+    },
+  })]).ctx.generate;
+  const gated = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  const candidate = gated.project.artifacts[gated.artifactId];
+  assert.equal(gated.outcome, 'gated');
+  assert.equal(candidate.content, manuscript);
+  assert.equal(candidate.words, countWords(manuscript));
+  assert.match(gated.project.gate.reasons.join(' '), /Planning notes were separated/);
+  assert.equal(gated.project.state.pending_review.artifact.separated_notes, '## Thread tracking\n- Who rang the bell?\n- Nora promises to return.');
+  assert.deepEqual(gated.project.state.chapter_updates, []);
+
+  const accepted = approvePending(gated.project, {}, ctx).project;
+  assert.deepEqual(accepted.state.chapter_updates, [{
+    chapter: 1,
+    artifact_id: candidate.id,
+    actual_events: ['Nora reaches the tower before dawn.'],
+    open_questions: ['Who rang the bell?'],
+    resolved_threads: ['Who rang the bell?'],
+    planned_beats: ['Nora returns to the tower.'],
+    separated_notes: candidate.separatedNotes,
+  }]);
+  assert.match(manuscriptMarkdown(accepted), /Nora reached the tower before dawn/);
+  assert.doesNotMatch(manuscriptMarkdown(accepted), /Thread tracking|Nora promises to return/);
+  assert.equal(projectSummary(accepted).words, countWords(manuscript));
+  const restored = importProjectBackup(JSON.parse(JSON.stringify(accepted)), ctx);
+  assert.equal(restored.artifacts[candidate.id].separatedNotes, candidate.separatedNotes);
+  assert.deepEqual(restored.state.chapter_updates, accepted.state.chapter_updates);
+});
+
+test('revising a legacy chapter separates its appendix and keeps the original version in history', async () => {
+  const { project, ctx } = await started();
+  const originalText = '# Chapter 1\n\nNora waits at the tower.\n\n## Scene timeline\n- The bell rings after midnight.';
+  const added = addAuthorText(project, { type: 'chapter', chapter: 1, content: originalText }, ctx);
+  const { ctx: editCtx, calls } = makeCtx([good('# Chapter 1\n\nNora waits beneath the tower.')]);
+  const revised = await runStep(added.project, { action: 'edit', target: 'chapter-1-v1' }, editCtx);
+  assert.equal(revised.outcome, 'gated');
+  assert.equal(revised.project.artifacts['chapter-1-v2'].content, '# Chapter 1\n\nNora waits beneath the tower.');
+  assert.equal(revised.project.artifacts['chapter-1-v2'].separatedNotes, '## Scene timeline\n- The bell rings after midnight.');
+  assert.equal(revised.project.artifacts['chapter-1-v1'].content, originalText);
+  assert.match(calls[0].prompt, /## Separated chapter planning notes/);
+  const accepted = approvePending(revised.project, {}, editCtx).project;
+  assert.equal(accepted.artifacts['chapter-1-v1'].status, 'superseded');
+  assert.equal(accepted.artifacts['chapter-1-v1'].content, originalText);
+  assert.match(manuscriptMarkdown(accepted), /Nora waits beneath the tower/);
+  assert.doesNotMatch(manuscriptMarkdown(accepted), /Scene timeline|bell rings after midnight/);
+});
+
 test('an unfinished draft is gated and never marked complete by approval', async () => {
   const { project, ctx } = await started();
   ctx.generate = makeCtx([{ text: '# Chapter 1\n\nNora climbed the tower and', finishReason: 'length' }, good('')]).ctx.generate;
@@ -480,6 +565,26 @@ test('an unfinished draft is gated and never marked complete by approval', async
   assert.deepEqual(continued.project.state.lore.timeline_log, ['The bell rings again']);
   assert.match(calls[0].prompt, /Continue from exactly where it stops/);
   assertValid(continued.project);
+});
+
+test('continuing a legacy unfinished chapter carries separated notes forward', async () => {
+  const { project, ctx } = await started();
+  const added = addAuthorText(project, {
+    type: 'chapter',
+    chapter: 1,
+    complete: false,
+    content: '# Chapter 1\n\nNora opened the door.\n\n## Continuity notes\n- The key is still missing.',
+  }, ctx);
+  const { ctx: continueCtx, calls } = makeCtx([good('She stepped inside.')]);
+  const continued = await continueAccepted(added.project, 'chapter-1-v1', continueCtx);
+  assert.equal(continued.outcome, 'gated');
+  const candidate = continued.project.artifacts['chapter-1-v2'];
+  assert.equal(candidate.content, '# Chapter 1\n\nNora opened the door.\n\nShe stepped inside.');
+  assert.equal(candidate.separatedNotes, '## Continuity notes\n- The key is still missing.');
+  assert.match(calls[0].prompt, /The key is still missing/);
+  const accepted = approvePending(continued.project, {}, continueCtx).project;
+  assert.doesNotMatch(manuscriptMarkdown(accepted), /Continuity notes|key is still missing/);
+  assert.equal(accepted.artifacts['chapter-1-v1'].content, added.project.artifacts['chapter-1-v1'].content);
 });
 
 test('continuing a pending draft extends it in place and re-gates', async () => {
@@ -700,9 +805,15 @@ test('project backups round-trip and damaged files are refused', async () => {
   assert.notEqual(restored.id, gated.id);
   assert.deepEqual(restored.state, gated.state);
   assert.deepEqual(checkProject(restored), []);
+  const legacy = JSON.parse(JSON.stringify(gated));
+  delete legacy.state.chapter_updates;
+  assert.deepEqual(importProjectBackup(legacy, makeCtx().ctx).state.chapter_updates, []);
   const damaged = JSON.parse(JSON.stringify(gated));
   damaged.gate = null;
   assert.ok(checkProject(damaged).length > 0);
+  const damagedNotes = JSON.parse(JSON.stringify(gated));
+  damagedNotes.artifacts[damagedNotes.gate.artifactId].separatedNotes = {};
+  assert.ok(checkProject(damagedNotes).some((error) => /Artifact .* is damaged/.test(error)));
   assert.throws(() => importProjectBackup({ format: 'other' }), assertCode('invalid-project'));
   const newer = JSON.parse(JSON.stringify(gated));
   newer.formatVersion = 99;

@@ -57,7 +57,7 @@ export function validateSnapshot(input) {
     return { ok: false, errors: ['The snapshot must be a JSON object.'], warnings, migrations };
   }
 
-  const known = ['project', 'lore', 'plot', 'characters', 'draft_progress', 'orchestrator_log', 'pending_review'];
+  const known = ['project', 'lore', 'plot', 'characters', 'draft_progress', 'chapter_updates', 'orchestrator_log', 'pending_review'];
   for (const key of Object.keys(input)) {
     if (!known.includes(key)) warnings.push(`Unknown field "${key}" will not be imported.`);
   }
@@ -125,6 +125,23 @@ export function validateSnapshot(input) {
     if (typeof progress.tier2_pending !== 'boolean') errors.push('draft_progress.tier2_pending must be true or false.');
   }
 
+  if (input.chapter_updates === undefined) {
+    migrations.push('Add an empty chapter_updates list.');
+  } else if (!Array.isArray(input.chapter_updates)) {
+    errors.push('chapter_updates must be a list.');
+  } else {
+    input.chapter_updates.forEach((update, index) => {
+      if (!isPlainObject(update) || !isPositiveInteger(update.chapter) || !isString(update.artifact_id) || !update.artifact_id.trim()) {
+        errors.push(`chapter_updates[${index}] needs a chapter number and artifact_id.`);
+        return;
+      }
+      for (const field of ['actual_events', 'open_questions', 'resolved_threads', 'planned_beats']) {
+        if (!Array.isArray(update[field]) || !update[field].every(isString)) errors.push(`chapter_updates[${index}].${field} must be a list of text.`);
+      }
+      if (!isString(update.separated_notes)) errors.push(`chapter_updates[${index}].separated_notes must be text.`);
+    });
+  }
+
   if (!Array.isArray(input.orchestrator_log)) {
     errors.push('orchestrator_log must be a list.');
   } else {
@@ -156,6 +173,8 @@ export function validateSnapshot(input) {
         errors.push('pending_review.artifact.id cannot be a reserved name such as __proto__ or constructor.');
       } else if (artifact.chapter !== undefined && artifact.chapter !== '' && !isPositiveInteger(artifact.chapter)) {
         errors.push('pending_review.artifact.chapter must be a positive whole number.');
+      } else if (artifact.separated_notes !== undefined && !isString(artifact.separated_notes)) {
+        errors.push('pending_review.artifact.separated_notes must be text.');
       }
       if (!isString(pending.worker)) errors.push('pending_review.worker must be text.');
       if (!isConfidence(pending.confidence)) errors.push('pending_review.confidence must be null or a number from 0 to 1.');
@@ -190,6 +209,7 @@ export function migrateSnapshot(input) {
       voice_notes: character.voice_notes ?? '',
     })),
     draft_progress: { ...input.draft_progress },
+    chapter_updates: structuredClone(input.chapter_updates ?? []),
     orchestrator_log: input.orchestrator_log.map((entry) => ({ ...entry })),
     pending_review: input.pending_review === undefined ? null : structuredClone(input.pending_review),
   };
