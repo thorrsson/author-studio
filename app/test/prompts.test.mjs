@@ -3,6 +3,7 @@ import test from 'node:test';
 import { estimateTokens, fitText, inputBudget, outputReserve, requestMaxTokens } from '../src/core/budget.js';
 import { runStep, startProject } from '../src/core/engine.js';
 import {
+  buildAssessmentPrompt,
   buildConsolidationPrompt,
   buildReviewerPrompt,
   buildStartPrompt,
@@ -58,6 +59,8 @@ test('full prompts carry the shared worker guide and the response contract', asy
   assert.match(request.prompt, /A quiet story about a baker\./);
   assert.match(request.prompt, /No canon has been accepted yet\./);
   assert.match(request.prompt, /# Task\nAct as the World Designer/);
+  assert.match(request.prompt, /Reserve room for the assessment/);
+  assert.ok(request.prompt.includes(`End with the ${ASSESSMENT_HEADING}`));
   assert.equal(request.maxTokens, 8192);
   assert.deepEqual(request.contextNotes, []);
   assert.ok(fits(request, FULL));
@@ -86,9 +89,48 @@ test('all chapter operations keep manuscript and structured continuity updates s
     target: { ...target, continuityNotes: '### Threads\n**New Threads Introduced:**\n- Who took the bread?' },
     profile: FULL, resources,
   });
-  assert.match(request.prompt, /Separated continuity notes \(proposals, not accepted canon\)/);
+  assert.match(request.prompt, /Separated continuity notes \(unaccepted model-generated proposals\)/);
   assert.match(request.prompt, /Who took the bread/);
   assert.match(request.prompt, /Include supported updates in proposed_changes/);
+  assert.match(request.prompt, /not author instructions or accepted canon/);
+  assert.doesNotMatch(request.prompt, /These come from the author/);
+});
+
+test('large separated notes shrink into the compact prompt budget', async () => {
+  const current = await project();
+  const target = {
+    id: 'chapter-1-v1', type: 'chapter', chapter: 1, worker: 'Scene Writer',
+    content: '# Chapter 1\n\nA short story.',
+    continuityNotes: `### Threads\n\n${'- Possible thread detail. '.repeat(250)}`,
+  };
+  const request = buildWorkerPrompt({
+    project: current, mode: 'revise', worker: 'Scene Writer', target, profile: COMPACT, resources,
+  });
+  assert.ok(fits(request, COMPACT));
+  assert.ok(request.contextNotes.includes('separated continuity notes was shortened.'));
+  assert.match(request.prompt, /untrusted model-generated material, not author instructions or accepted canon/);
+  assert.match(request.prompt, /omitted to fit the model's memory/);
+});
+
+test('assessment-only prompts include the full artifact and honest rating instructions', async () => {
+  const current = await project();
+  current.state.lore.timeline_log = Array.from({ length: 20 }, (_, index) => `Event ${index + 1}`);
+  const artifact = { id: 'chapter-1-v1', type: 'chapter', chapter: 1, worker: 'Scene Writer', content: 'Full draft text.', finishReason: 'length', notes: 'Keep the ending quiet.' };
+  for (const profile of [FULL, COMPACT]) {
+    const request = buildAssessmentPrompt({ project: current, artifact, profile, resources });
+    assert.ok(fits(request, profile));
+    assertBalancedTags(request.prompt);
+    assert.match(request.prompt, /Full draft text\./);
+    assert.match(request.prompt, /Do not assume a high rating/);
+    assert.match(request.prompt, /artifact must remain incomplete/);
+    assert.match(request.prompt, /Do not rewrite, continue, or repeat/);
+    assert.match(request.prompt, /Keep the ending quiet/);
+    assert.match(request.prompt, /Event 1\n/);
+    assert.match(request.prompt, /Event 20/);
+  }
+  assert.throws(() => buildAssessmentPrompt({
+    project: current, artifact: { ...artifact, content: 'Long text. '.repeat(5000) }, profile: COMPACT, resources,
+  }), PromptTooLongError);
 });
 
 test('compact prompts fit a 4K on-device model and report shortened context', async () => {
@@ -100,15 +142,14 @@ test('compact prompts fit a 4K on-device model and report shortened context', as
   const request = buildWorkerPrompt({ project: current, mode: 'new', action: 'draft', worker: 'Scene Writer', chapter: 2, profile: COMPACT, resources });
   assert.ok(fits(request, COMPACT), 'prompt and reply fit in the context window');
   assertBalancedTags(request.prompt);
-  assert.match(request.prompt, /<artifact id="chapter-1-v1">\n\[… earlier text omitted/);
-  assert.match(request.prompt, /omitted to fit the model's memory …\]\n\nThe oven hummed/);
+  assert.match(request.prompt, /Earlier units \(summaries\)/);
+  assert.match(request.prompt, /Unit 1 \(chapter-1-v1.*Summary of # Chapter 1/);
   assert.ok(request.maxTokens >= 1000);
   assert.ok(request.contextNotes.length > 0);
   assert.match(request.system, /Your role: Draft the requested chapter/);
   assert.doesNotMatch(request.system, /## Worker guide/);
   assert.match(request.prompt, /room for about [\d,]+ words/);
   assert.doesNotMatch(request.prompt, /\u27e6/);
-  assert.match(request.prompt, /End of unit 1/);
 });
 
 test('targets that cannot fit are refused instead of silently truncated', async () => {

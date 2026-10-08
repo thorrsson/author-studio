@@ -132,6 +132,18 @@ no contradictions of your accepted story and nothing unfinished, is accepted
 automatically. Anything else waits for you to approve it, ask for changes, or
 reject it. Your story bible changes only when you accept something.
 
+If a writing, planning, revision, or continuation response omits a usable
+confidence rating, the app makes one assessment-only request to the same model,
+without rewriting the text. This uses the full artifact and story baseline;
+if they cannot fit, the request fails, or the assessment is still unusable,
+the artifact stays unrated and waits for human review. A recovered rating never
+overrides a cutoff, an unfinished artifact, or a reported canon conflict.
+The follow-up uses additional model tokens.
+
+For multiple chapters, turn on **YOLO mode** under Write and select the last
+chapter. It keeps drafting accepted chapters and pauses whenever a chapter
+needs review, including when its assessment cannot be recovered.
+
 The **History** tab shows every decision, and you can download the manuscript
 as a Word document from the **Manuscript** tab.
 
