@@ -883,7 +883,7 @@ function bibleTab(project) {
   return [
     h('div', { class: 'section-head' },
       h('div', null, h('h2', null, 'Story bible'), h('p', { class: 'muted' }, 'What you have established so far. It updates when you accept work.')),
-      h('button', { class: 'btn', type: 'button', onclick: () => openExportMenu(project, 'bible') }, 'Export story bible…')),
+      h('button', { class: 'btn', type: 'button', disabled: !canExport(project, 'bible'), onclick: () => openExportMenu(project, 'bible') }, 'Export story bible…')),
     characters.length ? bibleSection('Characters', null, h('div', { class: 'character-grid' }, characters.map((character) => h('article', { class: 'character-card' },
       h('h4', null, character.name),
       character.role ? h('p', null, h('span', { class: 'label' }, 'Role '), character.role) : null,

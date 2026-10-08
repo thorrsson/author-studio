@@ -174,6 +174,15 @@ async function main() {
     await shot('03-new-project-streaming');
     await page.getByRole('heading', { name: 'The Lantern Keeper', level: 1 }).waitFor();
 
+    step('unavailable story bible cannot launch an export');
+    await page.click('.tab:has-text("Story bible")');
+    await page.getByRole('heading', { name: 'The story bible is empty' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Export story bible…', exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Export…', exact: true }).click();
+    assert.equal(await page.locator('#export-target option[value="bible"]').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.click('.tab:has-text("Write")');
+
     step('accept a setting automatically');
     await page.click('.step-option:has-text("Setting")');
     await page.click('.composer .btn.primary');
@@ -197,6 +206,7 @@ async function main() {
     assert.match(packet, /no supernatural explanation/);
     assert.doesNotMatch(packet, /No accepted chapters/);
     await page.click('.tab:has-text("Story bible")');
+    assert.equal(await page.getByRole('button', { name: 'Export story bible…', exact: true }).isEnabled(), true);
     await page.getByRole('button', { name: 'Export story bible…', exact: true }).click();
     assert.equal(await page.inputValue('#export-target'), 'bible');
     await page.selectOption('#export-target', 'world');
