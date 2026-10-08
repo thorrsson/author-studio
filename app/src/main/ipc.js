@@ -14,7 +14,6 @@ import {
   forceReview,
   importProjectBackup,
   importSnapshot,
-  manuscriptMarkdown,
   modifyPending,
   PROJECT_FORMAT,
   rejectPending,
@@ -25,6 +24,7 @@ import {
   updateBrief,
 } from '../core/engine.js';
 import { markdownToText } from '../core/markdown.js';
+import { canExport, exportMarkdown, EXPORT_TARGETS } from '../core/exports.js';
 import { isPlainObject } from '../core/state.js';
 import { ProviderError } from '../providers/errors.js';
 import { inspectCompatibleServer } from '../providers/openai.js';
@@ -226,6 +226,31 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return { path: result.filePath, name: path.basename(result.filePath) };
   }
 
+  async function exportDocument({ projectId, target, format }, event, { allowEmpty = false } = {}) {
+    if (!Object.hasOwn(EXPORT_TARGETS, target) || !['docx', 'md', 'txt'].includes(format)) {
+      throw new AppError('invalid-input', 'Choose an export option and Word, Markdown, or plain text.');
+    }
+    const { project } = await projects.load(requireProjectId(projectId));
+    if (!allowEmpty && !canExport(project, target)) throw new AppError('empty-export', 'There is no accepted content to export for this option.');
+    const label = EXPORT_TARGETS[target].label;
+    const name = safeFileName(project.state.project.title);
+    const defaultName = `${name}${target === 'manuscript' ? '' : ` - ${label}`}.${format}`;
+    const markdown = exportMarkdown(project, target);
+    const formats = {
+      txt: { name: 'Plain text', title: 'as plain text' },
+      md: { name: 'Markdown', title: 'as Markdown' },
+      docx: { name: 'Word document', title: 'for Word' },
+    };
+    const data = format === 'docx'
+      ? createDocx(markdown, { title: project.state.project.title, paper: appInfo.paper })
+      : format === 'txt' ? markdownToText(markdown, { includeLinks: target !== 'manuscript' }) : markdown;
+    return writeExport(event, {
+      title: `Export ${label.toLowerCase()} ${formats[format].title}`,
+      defaultName,
+      filters: [{ name: formats[format].name, extensions: [format] }],
+    }, data);
+  }
+
   async function importData(data, consent) {
     if (data?.format === PROJECT_FORMAT) {
       const project = importProjectBackup(data);
@@ -377,19 +402,8 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
       return { cancelled: Boolean(entry) };
     },
 
-    'files:exportManuscript': async ({ projectId, format }, event) => {
-      const { project } = await projects.load(requireProjectId(projectId));
-      const name = safeFileName(project.state.project.title);
-      const markdown = manuscriptMarkdown(project);
-      if (format === 'txt') {
-        return writeExport(event, { title: 'Export manuscript as plain text', defaultName: `${name}.txt`, filters: [{ name: 'Plain text', extensions: ['txt'] }] }, markdownToText(markdown));
-      }
-      if (format === 'docx') {
-        const docx = createDocx(markdown, { title: project.state.project.title, paper: appInfo.paper });
-        return writeExport(event, { title: 'Export manuscript for Word', defaultName: `${name}.docx`, filters: [{ name: 'Word document', extensions: ['docx'] }] }, docx);
-      }
-      return writeExport(event, { title: 'Export manuscript as Markdown', defaultName: `${name}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] }, markdown);
-    },
+    'files:exportManuscript': ({ projectId, format = 'md' }, event) => exportDocument({ projectId, target: 'manuscript', format }, event, { allowEmpty: true }),
+    'files:exportDocument': (payload, event) => exportDocument(payload, event),
 
     'files:exportSnapshot': async ({ projectId }, event) => {
       const { project } = await projects.load(requireProjectId(projectId));

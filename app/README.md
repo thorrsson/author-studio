@@ -149,6 +149,24 @@ as a Word document from the **Manuscript** tab.
 
 ## Your data and privacy
 
+### Exporting research and plans
+
+You can use Author Studio entirely for research and story planning without
+drafting chapters. Choose **Export…** in any project or **File → Export Project
+Content** (`Cmd/Ctrl+E`) and select the story bible, research, setting, story
+plan, idea and brief, or a complete planning packet. Each is available as a
+Word document (`.docx`), Markdown (`.md`), or plain text (`.txt`).
+
+The story bible includes established characters, setting, timeline, and plot
+details plus the full accepted research, setting, and story-plan documents.
+The planning packet also includes the saved idea, genre, and creative brief,
+but no manuscript. Individual research, setting, and story-plan exports include
+all accepted documents of that kind. Pending, rejected, and superseded versions
+are excluded. Save brief edits before exporting. These readable exports do not
+replace project backups or the plugin's JSON state file.
+
+### Local storage and privacy
+
 - Projects are saved on your computer. Use **Help → Show Projects Folder** to
   find them. They live in `~/Library/Application Support/Author Studio` on a
   Mac, `%APPDATA%\Author Studio` on Windows, and `~/.config/Author Studio` on

@@ -938,16 +938,7 @@ export function snapshotOf(project) {
   return structuredClone(project.state);
 }
 
-export function manuscriptMarkdown(project) {
-  const chapters = acceptedOf(project, 'chapter').sort((a, b) => a.chapter - b.chapter);
-  const parts = [`# ${project.state.project.title || 'Untitled'}`];
-  for (const chapter of chapters) {
-    const body = /^#{1,6}\s/.test(chapter.content) ? chapter.content.replace(/^#\s/, '## ') : `## Chapter ${chapter.chapter}\n\n${chapter.content}`;
-    parts.push(chapter.complete === false ? `${body}\n\n*[Unfinished]*` : body);
-  }
-  if (!chapters.length) parts.push('*No accepted chapters yet.*');
-  return `${parts.join('\n\n')}\n`;
-}
+export { manuscriptMarkdown } from './exports.js';
 
 export function projectSummary(project) {
   const chapters = acceptedOf(project, 'chapter');
