@@ -224,6 +224,34 @@ async function harness(t, script) {
   return { dir, server, settings, projects, handlers, call, events, saves, opens };
 }
 
+test('IPC exports planning documents without a manuscript and validates targets and formats', async (t) => {
+  const h = await harness(t, async (_req, res) => json(res, {}));
+  const { project } = await h.call('projects:create', { concept: 'Research a coastal village.', title: 'Planning only', useAi: false });
+  await h.call('engine:run', { projectId: project.id, op: 'addText', args: { type: 'research', content: '## Findings\n\nA **harbour** and a source: [Archive](https://example.com).' } });
+  for (const target of ['bible', 'research', 'brief', 'planning']) {
+    for (const format of ['md', 'txt', 'docx']) {
+      const result = await h.call('files:exportDocument', { projectId: project.id, target, format });
+      assert.equal(path.extname(result.path), `.${format}`);
+      if (format === 'docx') assert.equal((await readFile(result.path)).subarray(0, 2).toString(), 'PK');
+      else {
+        const text = await readFile(result.path, 'utf8');
+        assert.match(text, target === 'brief' ? /Research a coastal village/ : /harbour/);
+        if (target !== 'brief') assert.ok(text.includes('https://example.com'));
+        assert.doesNotMatch(text, /No accepted chapters/);
+        if (format === 'txt') assert.doesNotMatch(text, /\*\*harbour\*\*/);
+      }
+    }
+  }
+  const saved = h.saves.length;
+  for (const target of ['unknown', '__proto__']) {
+    await assert.rejects(h.call('files:exportDocument', { projectId: project.id, target, format: 'md' }), { code: 'invalid-input' });
+  }
+  await assert.rejects(h.call('files:exportDocument', { projectId: project.id, target: 'research', format: 'pdf' }), { code: 'invalid-input' });
+  await assert.rejects(h.call('files:exportDocument', { projectId: '../project', target: 'research', format: 'md' }), { code: 'invalid-input' });
+  await assert.rejects(h.call('files:exportDocument', { projectId: project.id, target: 'world', format: 'md' }), { code: 'empty-export' });
+  assert.equal(h.saves.length, saved, 'invalid or empty exports do not open a save dialog');
+});
+
 test('IPC runs steps against a local server, gates low confidence, and exports', async (t) => {
   const replies = [
     good('The village of Kilmore has a bakery and a bell tower.'),

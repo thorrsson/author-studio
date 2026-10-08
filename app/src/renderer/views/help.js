@@ -34,6 +34,7 @@ export function renderHelp() {
       h('ul', { class: 'help-list' },
         h('li', null, 'Every save keeps the previous version as a backup copy, which Author Studio uses automatically if a file is damaged.'),
         h('li', null, 'Export the manuscript as a Word document (standard manuscript format), Markdown, or plain text from the Manuscript tab.'),
+        h('li', null, 'Use Export in any project, or File > Export Project Content, to export the story bible, research, setting, story plan, idea and brief, or a complete planning packet as Word, Markdown, or plain text. No chapters are needed. Exports include saved, accepted content only; the story bible includes full planning documents, while the planning packet also includes the idea and brief.'),
         h('li', null, 'Back up a whole project, or export a state file for the Author Studio plugin for GitHub Copilot and Claude Code, from the History tab. Open either kind of file with File > Open Backup or State File.'))),
     section('If something goes wrong',
       h('ul', { class: 'help-list' },
@@ -45,7 +46,7 @@ export function renderHelp() {
       h('table', { class: 'shortcuts' }, h('tbody', null, [
         ['New project', `${mod}N`],
         ['Open a backup or state file', `${mod}O`],
-        ['Export the manuscript', `${mod}E`],
+        ['Export project content', `${mod}E`],
         ['Settings', `${mod},`],
         ['Run the step or revision you are writing notes for', `${mod}Enter`],
       ].map(([label, keys]) => h('tr', null, h('td', null, label), h('td', null, h('kbd', null, keys))))))),

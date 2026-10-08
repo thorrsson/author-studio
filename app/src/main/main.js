@@ -50,7 +50,7 @@ const MIME = {
   '.woff2': 'font/woff2',
 };
 // Pure modules the renderer shares with the engine (no Node.js APIs).
-const SHARED_MODULES = new Set(['core/address.js', 'core/labels.js', 'core/markdown.js', 'core/patch.js', 'core/state.js']);
+const SHARED_MODULES = new Set(['core/address.js', 'core/exports.js', 'core/labels.js', 'core/markdown.js', 'core/patch.js', 'core/state.js']);
 const devTools = !app.isPackaged || process.env.AUTHOR_STUDIO_DEVTOOLS === '1';
 
 if (process.env.AUTHOR_STUDIO_USER_DATA) app.setPath('userData', path.resolve(process.env.AUTHOR_STUDIO_USER_DATA));
@@ -236,7 +236,7 @@ function buildMenu(dataDir) {
         { label: 'New Project…', accelerator: 'CmdOrCtrl+N', click: () => sendCommand('new-project') },
         { label: 'Open Backup or State File…', accelerator: 'CmdOrCtrl+O', click: () => sendCommand('import') },
         { type: 'separator' },
-        { label: 'Export Manuscript…', accelerator: 'CmdOrCtrl+E', click: () => sendCommand('export') },
+        { label: 'Export Project Content…', accelerator: 'CmdOrCtrl+E', click: () => sendCommand('export') },
         { type: 'separator' },
         ...(isMac ? [{ role: 'close' }] : [settingsItem, { type: 'separator' }, { role: 'quit' }]),
       ],
