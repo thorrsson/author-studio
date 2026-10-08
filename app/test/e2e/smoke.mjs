@@ -71,11 +71,13 @@ function yoloChapter(number, confidence) {
 }
 
 // Replies in the order the walkthrough asks for them.
+const YOLO_SECOND = yoloChapter(2, 0.9).split(ASSESSMENT_HEADING);
 const SCRIPT = [
   { text: BRIEF, size: 8, delay: 25 },
   { text: WORLD },
   { text: CHAPTER },
-  { text: yoloChapter(2, 0.9) },
+  { text: YOLO_SECOND[0].trim() },
+  { text: `${ASSESSMENT_HEADING}${YOLO_SECOND[1]}` },
   { text: yoloChapter(3, 0.9) },
   { text: yoloChapter(4, 0.5) },
   { text: 'A plan that takes a long time. '.repeat(400), size: 12, delay: 120 },
@@ -190,7 +192,7 @@ async function main() {
     await page.waitForSelector('.toast:has-text("You approved")');
     await page.waitForSelector('.composer');
 
-    step('write several chapters in YOLO mode until one needs review');
+    step('recover a missing assessment in YOLO mode and continue until review is needed');
     await page.click('.step-option:has-text("Write")');
     assert.equal(await page.inputValue('#step-chapter'), '2');
     await page.check('#step-yolo');
