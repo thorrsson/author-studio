@@ -173,6 +173,12 @@ snapshots, including `sci_fantasy` projects, retain their genre, canon, and
 chapter numbering. Unused magic or twist fields stay empty, not filled with
 invented material. State is still displayed only on request.
 
+Chapter drafts, revisions, and continuations contain manuscript text only.
+Actual events, open questions, resolved threads, and planned beats go through
+structured proposals. Clearly labeled, list-only planning appendices are kept as
+separate notes and require human review; accepted updates appear in the Story
+bible without entering manuscript exports or word counts.
+
 ### Human review
 
 Confidence **<= 0.75**, missing/invalid confidence, or any contradiction triggers

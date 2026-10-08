@@ -83,6 +83,37 @@ test('compact prompts fit a 4K on-device model and report shortened context', as
   assert.match(request.prompt, /End of unit 1/);
 });
 
+test('chapter drafting, revision, and continuation keep planning metadata outside manuscript output', async () => {
+  const current = await project();
+  const draft = buildWorkerPrompt({ project: current, mode: 'new', action: 'draft', worker: 'Scene Writer', chapter: 1, profile: FULL, resources });
+  assert.match(draft.system, /For chapter work, output manuscript text only/);
+  assert.match(draft.prompt, /actual events in lore\.timeline_log, open questions in plot\.loose_threads, confirmed resolutions in plot\.resolved_threads, and planned beats in plot\.act_beats/);
+  assert.match(draft.prompt, /do not append thread tracking, scene timelines, continuity notes/);
+
+  const target = {
+    id: 'chapter-1-v1',
+    base: 'chapter-1',
+    version: 1,
+    type: 'chapter',
+    chapter: 1,
+    worker: 'Scene Writer',
+    content: '# Chapter 1\n\nThe door stood open.',
+    separatedNotes: '## Continuity notes\n- The key is missing.',
+  };
+  for (const mode of ['edit', 'revise', 'continue']) {
+    const request = buildWorkerPrompt({ project: current, mode, worker: mode === 'edit' ? 'Editor' : 'Scene Writer', target, profile: FULL, resources });
+    assert.match(request.prompt, /## Separated chapter planning notes/);
+    assert.match(request.prompt, /The key is missing/);
+    assert.match(request.prompt, /manuscript text only/);
+    assert.match(request.prompt, /confirmed resolutions/);
+  }
+
+  const compact = buildWorkerPrompt({ project: current, mode: 'new', action: 'draft', worker: 'Scene Writer', chapter: 1, profile: COMPACT, resources });
+  assert.match(compact.system, /output manuscript text only/);
+  assert.match(compact.prompt, /confirmed resolutions/);
+  assert.ok(fits(compact, COMPACT));
+});
+
 test('targets that cannot fit are refused instead of silently truncated', async () => {
   const huge = `# Chapter 1\n\n${'Word '.repeat(6000)}`;
   const current = await project([{ request: { action: 'draft', chapter: 1 }, response: good(huge) }]);

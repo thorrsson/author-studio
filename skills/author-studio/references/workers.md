@@ -81,6 +81,11 @@ Draft the requested chapter or agreed numbered unit only, using available beats,
 point of view, voice notes, timeline, and prior context. Request missing essential material
 rather than inventing previously accepted events.
 
+Return manuscript text only. Do not append thread tracking, scene timelines,
+continuity notes, open questions, or other planning metadata to the chapter.
+Put actual events, open questions, confirmed thread resolutions, and planned beats
+in the structured `proposed_changes` fields instead.
+
 For prose chapters, aim for 1,000-3,000 words unless the user requested another
 length. Other forms follow the agreed scope: a 500-word flash piece must not
 be expanded to a novel-length chapter. Match the intended voice, audience,
@@ -101,7 +106,9 @@ the creative brief. Apply relevant domain checks, such as clue fairness,
 relationship progression, historical accuracy, or speculative consistency.
 Do not flag the absence of magic, technology, a twist, or a conventional ending
 as a defect when the brief does not require it. Return revised text plus a
-concise change summary and unresolved issues.
+concise change summary and unresolved issues. For chapter revisions, return only
+the revised manuscript and put actual events, open questions, confirmed thread
+resolutions, and planned beats in `proposed_changes`, never in an appendix.
 
 Preserve the author's intent and accepted canon. A canon-changing edit is a
 proposal requiring review when it contradicts established facts, even if the

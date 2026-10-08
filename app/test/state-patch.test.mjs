@@ -70,6 +70,7 @@ test('validates field types and chapter numbers', () => {
   bad.project.status = 'writing';
   bad.draft_progress.completed_chapters = [1, 1, 0];
   bad.draft_progress.current_chapter = 2.5;
+  bad.chapter_updates = [{ chapter: 0, artifact_id: '', actual_events: [], open_questions: [], resolved_threads: [], planned_beats: [], separated_notes: '' }];
   bad.orchestrator_log = [{ step: 'x', worker: 'y', action: 'z', confidence: 2 }];
   bad.characters = [{ role: 'no name' }];
   const { errors } = validateSnapshot(bad);
@@ -78,6 +79,7 @@ test('validates field types and chapter numbers', () => {
   assert.ok(errors.some((error) => /current_chapter/.test(error)));
   assert.ok(errors.some((error) => /confidence/.test(error)));
   assert.ok(errors.some((error) => /characters\[0\]/.test(error)));
+  assert.ok(errors.some((error) => /chapter_updates\[0\]/.test(error)));
   assert.equal(validateSnapshot('nope').ok, false);
 });
 
@@ -85,6 +87,7 @@ test('reports and applies migrations for older snapshots', () => {
   const legacy = structuredClone(template);
   delete legacy.project.concept;
   delete legacy.pending_review;
+  delete legacy.chapter_updates;
   legacy.project = { title: 'Old', genre: 'sci_fantasy', status: 'drafting' };
   legacy.characters = [{ name: 'Ada', role: 'pilot' }];
   const result = validateSnapshot(legacy);
@@ -94,6 +97,7 @@ test('reports and applies migrations for older snapshots', () => {
   assert.equal(migrated.project.concept, '');
   assert.equal(migrated.project.genre, 'sci_fantasy');
   assert.equal(migrated.pending_review, null);
+  assert.deepEqual(migrated.chapter_updates, []);
   assert.deepEqual(migrated.characters[0], { name: 'Ada', role: 'pilot', arc_stage: '', voice_notes: '' });
   assert.deepEqual(validateSnapshot(migrated).migrations, []);
 });

@@ -22,6 +22,29 @@ function cleanArtifact(text) {
   return text.replace(/(?:\n[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)+\s*$/, '').trim();
 }
 
+const PLANNING_HEADING = /^#{2,4}[ \t]+(?:chapter[ \t]+)?(?:thread(?:s)?(?:[ \t]+(?:tracking|updates|notes|log))?|scene[ \t]+(?:timeline|notes|tracking|updates)|continuity[ \t]+(?:notes|tracking|updates)|timeline[ \t]+(?:notes|updates|events)|planned[ \t]+beats|actual[ \t]+events|open[ \t]+questions|confirmed[ \t]+resolutions|chapter[ \t]+updates)[ \t]*$/i;
+const PLANNING_ITEM = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+.+$/;
+
+export function separatePlanningAppendix(value) {
+  const lines = String(value ?? '').replace(/\r\n?/g, '\n').split('\n');
+  let end = lines.length - 1;
+  while (end >= 0 && (!lines[end].trim() || /^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/.test(lines[end]))) end -= 1;
+  if (end < 0 || !PLANNING_ITEM.test(lines[end])) return { artifact: cleanArtifact(lines.join('\n')) };
+  let firstItem = end;
+  while (firstItem >= 0 && (PLANNING_ITEM.test(lines[firstItem]) || !lines[firstItem].trim())) firstItem -= 1;
+  const headingIndex = firstItem;
+  if (headingIndex < 0 || !PLANNING_HEADING.test(lines[headingIndex])) return { artifact: cleanArtifact(lines.join('\n')) };
+  const appendixLines = lines.slice(headingIndex, end + 1);
+  const bodyLines = appendixLines.slice(1).filter((line) => line.trim());
+  if (!bodyLines.length || !bodyLines.every((line) => PLANNING_ITEM.test(line))) {
+    return { artifact: cleanArtifact(lines.join('\n')) };
+  }
+  return {
+    artifact: cleanArtifact(lines.slice(0, headingIndex).join('\n')),
+    separatedNotes: appendixLines.join('\n').trim(),
+  };
+}
+
 // Finds the end of the JSON object that starts at `start`, honoring strings.
 function matchingBrace(text, start) {
   let depth = 0;
@@ -105,7 +128,7 @@ function startsAssessment(text) {
   return Boolean(field && FIELD_NAMES.has(field[1].trim().toLowerCase()));
 }
 
-export function splitResponse(raw) {
+export function splitResponse(raw, { separatePlanning = true } = {}) {
   const text = stripThinking(raw);
   let marker = null;
   for (const match of text.matchAll(MARKER_LINE)) {
@@ -114,25 +137,29 @@ export function splitResponse(raw) {
     if (/author[ \t-]*studio/i.test(match[0]) || startsAssessment(rest)) marker = match;
   }
   if (marker) {
-    return {
-      artifact: cleanArtifact(text.slice(0, marker.index)),
-      assessmentText: text.slice(marker.index + marker[0].length),
-      markerFound: true,
-    };
+    return splitArtifact(text.slice(0, marker.index), text.slice(marker.index + marker[0].length), true, separatePlanning);
   }
   const trailing = findTrailingJson(text);
   if (trailing) {
-    return { artifact: cleanArtifact(text.slice(0, trailing.index)), assessmentText: trailing.text, markerFound: false };
+    return splitArtifact(text.slice(0, trailing.index), trailing.text, false, separatePlanning);
   }
   const bareMarker = [...text.matchAll(MARKER_LINE)].at(-1);
   if (bareMarker && /author[ \t-]*studio/i.test(bareMarker[0])) {
-    return { artifact: cleanArtifact(text.slice(0, bareMarker.index)), assessmentText: text.slice(bareMarker.index + bareMarker[0].length), markerFound: true };
+    return splitArtifact(text.slice(0, bareMarker.index), text.slice(bareMarker.index + bareMarker[0].length), true, separatePlanning);
   }
-  return { artifact: cleanArtifact(text), assessmentText: null, markerFound: false };
+  return splitArtifact(text, null, false, separatePlanning);
+}
+
+function splitArtifact(value, assessmentText, markerFound, separatePlanning) {
+  return {
+    ...(separatePlanning ? separatePlanningAppendix(value) : { artifact: cleanArtifact(value) }),
+    assessmentText,
+    markerFound,
+  };
 }
 
 // The text to show while a response is still streaming.
-export function visibleArtifact(raw) {
+export function visibleArtifact(raw, { separatePlanning = true } = {}) {
   const text = stripThinking(raw);
   const marker = LIVE_MARKER.exec(text);
   let visible = marker ? text.slice(0, marker.index) : text;
@@ -142,7 +169,7 @@ export function visibleArtifact(raw) {
     || (partial.length >= 6 && 'AUTHOR STUDIO ASSESSMENT'.startsWith(partial))) {
     visible = visible.slice(0, visible.length - lastLine.length);
   }
-  return cleanArtifact(visible);
+  return separatePlanning ? separatePlanningAppendix(visible).artifact : cleanArtifact(visible);
 }
 
 export function toConfidence(value) {

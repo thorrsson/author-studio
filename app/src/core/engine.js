@@ -4,7 +4,7 @@
 // returns a new project object and never mutates its input.
 import { artifactLabel, formatConfidence, isSafeArtifactId, parseArtifactId } from './labels.js';
 import { applyPatch, detectCanonChanges, isEmptyPatch, mergePatches, normalizePatch, normKey } from './patch.js';
-import { countWords, parseAssessment, splitResponse, visibleArtifact } from './parse.js';
+import { countWords, parseAssessment, separatePlanningAppendix, splitResponse, visibleArtifact } from './parse.js';
 import {
   acceptedOf,
   buildConsolidationPrompt,
@@ -196,6 +196,9 @@ function patchSummary(patch) {
 
 function gateReasonsFor(artifact) {
   const reasons = [];
+  if (artifact.separatedNotes?.trim()) {
+    reasons.push('Separated planning notes need your review before they can be retained with this chapter.');
+  }
   if (!artifact.assessed) {
     reasons.push(artifact.assessmentError === 'invalid'
       ? 'The model\'s self-assessment could not be read, so confidence is unassessed.'
@@ -225,8 +228,31 @@ function artifactSnapshot(artifact) {
     id: artifact.id,
     type: artifact.type,
     content: artifact.content,
+    ...(artifact.separatedNotes ? { separated_notes: artifact.separatedNotes } : {}),
     ...(isPositiveInteger(artifact.chapter) ? { chapter: artifact.chapter } : {}),
   };
+}
+
+function mergeSeparatedNotes(...values) {
+  const notes = [...new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean))];
+  return notes.length ? notes.join('\n\n') : undefined;
+}
+
+function separateChapterNotes(artifact) {
+  if (artifact?.type !== 'chapter') return artifact;
+  const separated = separatePlanningAppendix(artifact.content);
+  if (!separated.separatedNotes) return artifact;
+  return {
+    ...artifact,
+    content: separated.artifact,
+    separatedNotes: mergeSeparatedNotes(artifact.separatedNotes, separated.separatedNotes),
+  };
+}
+
+function retainChapterNotes(candidate, source) {
+  const separatedNotes = mergeSeparatedNotes(source?.separatedNotes, candidate.separatedNotes);
+  if (separatedNotes) candidate.separatedNotes = separatedNotes;
+  return candidate;
 }
 
 function openGate(project, artifact, { kind, reasons, previousStatus, ctx }) {
@@ -262,6 +288,21 @@ function phaseFor(artifact) {
 function acceptArtifact(project, artifact, ctx) {
   const { draft_progress: _ignored, ...patch } = artifact.proposedChanges ?? {};
   const state = applyPatch(project.state, patch);
+  if (artifact.type === 'chapter' && isPositiveInteger(artifact.chapter)) {
+    const update = {
+      chapter: artifact.chapter,
+      artifact_id: artifact.id,
+      actual_events: structuredClone(artifact.proposedChanges?.lore?.timeline_log ?? []),
+      open_questions: structuredClone(artifact.proposedChanges?.plot?.loose_threads ?? []),
+      resolved_threads: structuredClone(artifact.proposedChanges?.plot?.resolved_threads ?? []),
+      planned_beats: structuredClone(artifact.proposedChanges?.plot?.act_beats ?? []),
+      separated_notes: artifact.separatedNotes ?? '',
+    };
+    const hasUpdates = Object.entries(update).some(([key, value]) => key !== 'chapter' && key !== 'artifact_id'
+      && (Array.isArray(value) ? value.length > 0 : Boolean(value)));
+    state.chapter_updates = (state.chapter_updates ?? []).filter((item) => item.chapter !== artifact.chapter);
+    if (hasUpdates) state.chapter_updates.push(update);
+  }
   for (const other of Object.values(project.artifacts)) {
     if (other.id !== artifact.id && other.base === artifact.base && other.status === 'accepted') {
       other.status = 'superseded';
@@ -353,7 +394,7 @@ function buildPrompt(builder, args, ctx) {
 }
 
 function candidateFrom(response, { id, type, worker, chapter, sourceId, revisionOf, notes, ctx, contextNotes = [] }) {
-  const { artifact: content, assessmentText } = splitResponse(response.text);
+  const { artifact: content, assessmentText, separatedNotes } = splitResponse(response.text, { separatePlanning: type === 'chapter' });
   if (!content.trim()) {
     throw new EngineError('empty-response', 'The model returned no usable text. Try again, or choose a different model in Settings.');
   }
@@ -375,7 +416,7 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
     assessmentError: assessment.error,
     confidence: assessment.confidence,
     rationale: assessment.rationale,
-    flags: dedupe([...assessment.flags, ...patchNotes, ...contextFlags]),
+    flags: dedupe([...assessment.flags, ...patchNotes, ...contextFlags, ...(separatedNotes ? ['A list-only planning appendix was separated from the manuscript and needs human review.'] : [])]),
     contradictions: dedupe(assessment.contradictions),
     complete: response.finishReason !== 'length' && assessment.complete !== false,
     finishReason: response.finishReason,
@@ -383,6 +424,7 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
     changeSummary: assessment.changeSummary,
     unresolved: assessment.unresolved,
     proposedChanges: patch,
+    ...(separatedNotes ? { separatedNotes } : {}),
     ...(sourceId ? { sourceId } : {}),
     ...(revisionOf ? { revisionOf } : {}),
     ...(notes ? { notes } : {}),
@@ -463,7 +505,7 @@ export async function runStep(project, request, ctx) {
     }
     id = nextVersionId(project, `chapter-${chapter}`);
   } else if (request.action === 'edit') {
-    target = resolveTarget(project, request.target, 'edit');
+    target = separateChapterNotes(resolveTarget(project, request.target, 'edit'));
     type = target.type;
     chapter = target.chapter;
     id = nextVersionId(project, target.base);
@@ -481,10 +523,11 @@ export async function runStep(project, request, ctx) {
     profile: ctx.profile,
     resources: ctx.resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text)));
+  const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text, { separatePlanning: type === 'chapter' })));
   const candidate = candidateFrom(response, {
     id, type, worker: action.worker, chapter, sourceId: target?.id, notes, ctx, contextNotes: prompt.contextNotes,
   });
+  retainChapterNotes(candidate, target);
   return settle(project, candidate, { step: request.action, ctx });
 }
 
@@ -560,7 +603,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
   const gate = requireGate(project);
   const text = cleanText(notes, LIMITS.notes, 'Your notes');
   if (!text) throw new EngineError('invalid-input', 'Describe the changes you want.');
-  const current = gateArtifact(project, gate);
+  const current = separateChapterNotes(gateArtifact(project, gate));
   const worker = current.worker;
   const resources = ctx.resources;
   if (!resources.workers.roles[worker]) {
@@ -570,7 +613,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
   const prompt = buildPrompt(buildWorkerPrompt, {
     project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile: ctx.profile, resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value)));
+  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value, { separatePlanning: current.type === 'chapter' })));
   const candidate = candidateFrom(response, {
     id,
     type: current.type,
@@ -582,6 +625,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     ctx,
     contextNotes: prompt.contextNotes,
   });
+  retainChapterNotes(candidate, current);
   return regate(project, current, candidate, {
     gate,
     ctx,
@@ -611,10 +655,11 @@ export function joinContinuation(existing, addition) {
 }
 
 async function continuation(project, current, ctx) {
+  current = separateChapterNotes(current);
   const prompt = buildPrompt(buildWorkerPrompt, {
     project, mode: 'continue', worker: current.worker, chapter: current.chapter, target: current, profile: ctx.profile, resources: ctx.resources,
   }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value))));
+  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value, { separatePlanning: current.type === 'chapter' }))));
   const addition = candidateFrom(response, {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });
@@ -625,7 +670,7 @@ async function continuation(project, current, ctx) {
 // Continues an unfinished pending candidate in place, then re-presents the gate.
 export async function continuePending(project, ctx = {}) {
   const gate = requireGate(project);
-  const current = gateArtifact(project, gate);
+  const current = separateChapterNotes(gateArtifact(project, gate));
   if (gate.kind !== 'candidate' || current.complete !== false) {
     throw new EngineError('invalid-input', 'Only an unfinished candidate can be continued.');
   }
@@ -633,7 +678,7 @@ export async function continuePending(project, ctx = {}) {
     throw new EngineError('invalid-input', `This candidate came from "${current.worker}", which the app cannot run.`);
   }
   const { addition, content, added } = await continuation(project, current, ctx);
-  const updated = {
+  const updated = retainChapterNotes({
     ...structuredClone(current),
     content,
     words: countWords(content),
@@ -649,7 +694,7 @@ export async function continuePending(project, ctx = {}) {
     proposedChanges: mergePatches(current.proposedChanges, addition.proposedChanges),
     continuations: (current.continuations ?? 0) + 1,
     model: ctx.label ?? current.model,
-  };
+  }, { ...current, separatedNotes: mergeSeparatedNotes(current.separatedNotes, addition.separatedNotes) });
   return regate(project, current, updated, {
     gate,
     ctx,
@@ -663,7 +708,7 @@ export async function continuePending(project, ctx = {}) {
 export async function continueAccepted(project, artifactId, ctx = {}) {
   requireInitialized(project);
   requireNoGate(project);
-  const current = resolveTarget(project, artifactId, 'continue');
+  const current = separateChapterNotes(resolveTarget(project, artifactId, 'continue'));
   if (current.type !== 'chapter' || current.complete !== false) {
     throw new EngineError('invalid-input', 'Only an unfinished chapter or unit can be continued.');
   }
@@ -683,6 +728,7 @@ export async function continueAccepted(project, artifactId, ctx = {}) {
     sourceId: current.id,
     notes: 'Continue the unfinished text.',
   };
+  retainChapterNotes(candidate, current);
   return settle(project, candidate, { step: 'draft', ctx });
 }
 
@@ -885,7 +931,7 @@ export function updateBrief(project, { title, genre, concept, brief } = {}, ctx 
 }
 
 export function snapshotOf(project) {
-  return structuredClone(project.state);
+  return { ...structuredClone(project.state), chapter_updates: structuredClone(project.state.chapter_updates ?? []) };
 }
 
 export function manuscriptMarkdown(project) {
@@ -955,6 +1001,9 @@ export function importSnapshot(input, template, { consentToMigrations = false } 
       ...(chapter ? { chapter } : {}),
       status: 'pending',
       content: raw.content,
+      ...(typeof (raw.separated_notes ?? raw.separatedNotes) === 'string' && (raw.separated_notes ?? raw.separatedNotes).trim()
+        ? { separatedNotes: raw.separated_notes ?? raw.separatedNotes }
+        : {}),
       words: countWords(raw.content),
       assessed: pending.confidence !== null,
       confidence: pending.confidence,
@@ -993,6 +1042,7 @@ function validArtifact(artifact, id) {
     && typeof artifact.type === 'string'
     && typeof artifact.content === 'string'
     && typeof artifact.worker === 'string'
+    && (artifact.separatedNotes === undefined || typeof artifact.separatedNotes === 'string')
     && ARTIFACT_STATUSES.includes(artifact.status)
     && (artifact.confidence === null || artifact.confidence === undefined || (typeof artifact.confidence === 'number' && artifact.confidence >= 0 && artifact.confidence <= 1));
 }
@@ -1006,7 +1056,8 @@ export function checkProject(input) {
   }
   const state = validateSnapshot(input.state);
   errors.push(...state.errors);
-  if (state.migrations.length) errors.push(...state.migrations.map((item) => `Missing data: ${item}`));
+  const migrations = state.migrations.filter((item) => item !== 'Add an empty chapter_updates list.');
+  if (migrations.length) errors.push(...migrations.map((item) => `Missing data: ${item}`));
   if (!isPlainObject(input.artifacts)) errors.push('The project has no artifact list.');
   else {
     for (const [id, artifact] of Object.entries(input.artifacts)) {
@@ -1038,7 +1089,7 @@ export function importProjectBackup(input, ctx = {}) {
     id: uuid(),
     createdAt: typeof input.createdAt === 'string' ? input.createdAt : now(),
     updatedAt: now(),
-    state: structuredClone(input.state),
+    state: { ...structuredClone(input.state), chapter_updates: structuredClone(input.state.chapter_updates ?? []) },
     artifacts: structuredClone(input.artifacts),
     gate: input.gate ? structuredClone(input.gate) : null,
     activity: structuredClone(input.activity),

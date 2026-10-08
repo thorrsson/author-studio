@@ -66,6 +66,24 @@ test('falls back to a trailing JSON block or object without the marker', () => {
   assert.equal(assessment.complete, false);
 });
 
+test('separates recognizable list-only planning appendices without treating prose as metadata', () => {
+  const story = '# Chapter 1\n\nShe reached the harbor before dawn.';
+  const split = splitResponse(respond(`${story}\n\n## Thread tracking\n- The missing key remains unexplained.\n- Mara promises to return.`, { confidence: 0.9 }));
+  assert.equal(split.artifact, story);
+  assert.equal(split.separatedNotes, '## Thread tracking\n- The missing key remains unexplained.\n- Mara promises to return.');
+  const unseparated = splitResponse(respond(`${story}\n\n## Thread tracking\n- The missing key remains unexplained.`, { confidence: 0.9 }), { separatePlanning: false });
+  assert.match(unseparated.artifact, /## Thread tracking/);
+  assert.equal(unseparated.separatedNotes, undefined);
+
+  const ordinary = splitResponse(respond(`${story}\n\n## The Timeline\nThe rain began as she reached the harbor.`, { confidence: 0.9 }));
+  assert.equal(ordinary.artifact, `${story}\n\n## The Timeline\nThe rain began as she reached the harbor.`);
+  assert.equal(ordinary.separatedNotes, undefined);
+
+  const mixed = splitResponse(respond(`${story}\n\n## Scene timeline\n- She reaches the harbor.\n\nThe fog lifts.`, { confidence: 0.9 }));
+  assert.match(mixed.artifact, /## Scene timeline/);
+  assert.equal(mixed.separatedNotes, undefined);
+});
+
 test('treats a missing or unreadable assessment as unassessed', () => {
   const missing = splitResponse('Only a story, no assessment.');
   assert.equal(missing.assessmentText, null);

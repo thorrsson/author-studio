@@ -22,6 +22,7 @@
     "current_chapter": "",
     "tier2_pending": false
   },
+  "chapter_updates": [],
   "orchestrator_log": [],
   "pending_review": null
 }
