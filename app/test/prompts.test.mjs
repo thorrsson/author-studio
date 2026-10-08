@@ -3,6 +3,7 @@ import test from 'node:test';
 import { estimateTokens, fitText, inputBudget, outputReserve, requestMaxTokens } from '../src/core/budget.js';
 import { runStep, startProject } from '../src/core/engine.js';
 import {
+  buildAssessmentPrompt,
   buildConsolidationPrompt,
   buildReviewerPrompt,
   buildStartPrompt,
@@ -58,9 +59,32 @@ test('full prompts carry the shared worker guide and the response contract', asy
   assert.match(request.prompt, /A quiet story about a baker\./);
   assert.match(request.prompt, /No canon has been accepted yet\./);
   assert.match(request.prompt, /# Task\nAct as the World Designer/);
+  assert.match(request.prompt, /Reserve room for the assessment/);
+  assert.ok(request.prompt.includes(`End with the ${ASSESSMENT_HEADING}`));
   assert.equal(request.maxTokens, 8192);
   assert.deepEqual(request.contextNotes, []);
   assert.ok(fits(request, FULL));
+});
+
+test('assessment-only prompts include the full artifact and honest rating instructions', async () => {
+  const current = await project();
+  current.state.lore.timeline_log = Array.from({ length: 20 }, (_, index) => `Event ${index + 1}`);
+  const artifact = { id: 'chapter-1-v1', type: 'chapter', chapter: 1, worker: 'Scene Writer', content: 'Full draft text.', finishReason: 'length', notes: 'Keep the ending quiet.' };
+  for (const profile of [FULL, COMPACT]) {
+    const request = buildAssessmentPrompt({ project: current, artifact, profile, resources });
+    assert.ok(fits(request, profile));
+    assertBalancedTags(request.prompt);
+    assert.match(request.prompt, /Full draft text\./);
+    assert.match(request.prompt, /Do not assume a high rating/);
+    assert.match(request.prompt, /artifact must remain incomplete/);
+    assert.match(request.prompt, /Do not rewrite, continue, or repeat/);
+    assert.match(request.prompt, /Keep the ending quiet/);
+    assert.match(request.prompt, /Event 1\n/);
+    assert.match(request.prompt, /Event 20/);
+  }
+  assert.throws(() => buildAssessmentPrompt({
+    project: current, artifact: { ...artifact, content: 'Long text. '.repeat(5000) }, profile: COMPACT, resources,
+  }), PromptTooLongError);
 });
 
 test('compact prompts fit a 4K on-device model and report shortened context', async () => {

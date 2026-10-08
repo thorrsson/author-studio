@@ -5,8 +5,10 @@
 import { artifactLabel, formatConfidence, isSafeArtifactId, parseArtifactId } from './labels.js';
 import { applyPatch, detectCanonChanges, isEmptyPatch, mergePatches, normalizePatch, normKey } from './patch.js';
 import { countWords, parseAssessment, splitResponse, visibleArtifact } from './parse.js';
+import { ProviderError } from '../providers/errors.js';
 import {
   acceptedOf,
+  buildAssessmentPrompt,
   buildConsolidationPrompt,
   buildReviewerPrompt,
   buildStartPrompt,
@@ -391,6 +393,46 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
   };
 }
 
+async function recoverAssessment(project, candidate, ctx) {
+  if (candidate.assessed && candidate.confidence !== null) return candidate;
+  let prompt;
+  try {
+    prompt = buildAssessmentPrompt({ project, artifact: candidate, profile: ctx.profile, resources: ctx.resources });
+  } catch (error) {
+    if (!(error instanceof PromptTooLongError)) throw error;
+    return { ...candidate, flags: dedupe([...candidate.flags, 'The missing assessment could not be recovered: the full artifact and story baseline do not fit this model. Choose a larger-context model or review it yourself.']) };
+  }
+  let response;
+  try {
+    response = await callModel(ctx, prompt);
+  } catch (error) {
+    if (!(error instanceof ProviderError)) throw error;
+    return { ...candidate, flags: dedupe([...candidate.flags, `The assessment follow-up failed: ${error.message}`]) };
+  }
+  const split = splitResponse(response.text);
+  const assessment = parseAssessment(split.assessmentText ?? response.text);
+  if (response.finishReason === 'length' || !assessment.ok || assessment.confidence === null
+    || assessment.complete === null || !assessment.rationale || !assessment.summary) {
+    return { ...candidate, flags: dedupe([...candidate.flags, 'The model still did not return a complete, usable assessment after one follow-up. Human review is required.']) };
+  }
+  const { patch, notes } = normalizePatch(assessment.proposedChanges);
+  return {
+    ...candidate,
+    assessed: true,
+    assessmentError: null,
+    confidence: assessment.confidence,
+    rationale: assessment.rationale,
+    flags: dedupe([...candidate.flags, ...assessment.flags, ...notes, ...prompt.contextNotes,
+      'A missing confidence rating was recovered with an assessment-only follow-up; the writing was not changed.']),
+    contradictions: dedupe([...candidate.contradictions, ...assessment.contradictions]),
+    complete: candidate.complete && assessment.complete,
+    summary: assessment.summary || candidate.summary,
+    changeSummary: assessment.changeSummary || candidate.changeSummary,
+    unresolved: dedupe([...candidate.unresolved, ...assessment.unresolved]),
+    proposedChanges: mergePatches(candidate.proposedChanges, patch),
+  };
+}
+
 export async function startProject(input, template, ctx = {}) {
   const concept = cleanText(input?.concept, LIMITS.concept, 'The story idea');
   if (!concept) throw new EngineError('invalid-input', 'Describe your story idea to start a project.');
@@ -482,9 +524,9 @@ export async function runStep(project, request, ctx) {
     resources: ctx.resources,
   }, ctx);
   const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text)));
-  const candidate = candidateFrom(response, {
+  const candidate = await recoverAssessment(project, candidateFrom(response, {
     id, type, worker: action.worker, chapter, sourceId: target?.id, notes, ctx, contextNotes: prompt.contextNotes,
-  });
+  }), ctx);
   return settle(project, candidate, { step: request.action, ctx });
 }
 
@@ -571,7 +613,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile: ctx.profile, resources,
   }, ctx);
   const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value)));
-  const candidate = candidateFrom(response, {
+  const candidate = await recoverAssessment(project, candidateFrom(response, {
     id,
     type: current.type,
     worker,
@@ -581,7 +623,7 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     notes: text,
     ctx,
     contextNotes: prompt.contextNotes,
-  });
+  }), ctx);
   return regate(project, current, candidate, {
     gate,
     ctx,
@@ -619,7 +661,8 @@ async function continuation(project, current, ctx) {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });
   const content = joinContinuation(current.content, addition.content);
-  return { addition, content, added: countWords(content) - countWords(current.content) };
+  const assessed = await recoverAssessment(project, { ...addition, content }, ctx);
+  return { addition: { ...assessed, content: addition.content }, content, added: countWords(content) - countWords(current.content) };
 }
 
 // Continues an unfinished pending candidate in place, then re-presents the gate.
