@@ -309,7 +309,7 @@ function acceptArtifact(project, artifact, ctx) {
   const { draft_progress: _ignored, ...patch } = artifact.proposedChanges ?? {};
   const state = applyPatch(project.state, patch);
   if (artifact.type === 'chapter' && isPositiveInteger(artifact.chapter)) {
-    const update = {
+    const delta = {
       chapter: artifact.chapter,
       artifact_id: artifact.id,
       actual_events: structuredClone(artifact.proposedChanges?.lore?.timeline_log ?? []),
@@ -318,10 +318,23 @@ function acceptArtifact(project, artifact, ctx) {
       planned_beats: structuredClone(artifact.proposedChanges?.plot?.act_beats ?? []),
       separated_notes: artifact.separatedNotes ?? '',
     };
-    const hasUpdates = Object.entries(update).some(([key, value]) => key !== 'chapter' && key !== 'artifact_id'
+    const hasUpdates = Object.entries(delta).some(([key, value]) => key !== 'chapter' && key !== 'artifact_id'
       && (Array.isArray(value) ? value.length > 0 : Boolean(value)));
+    const previousUpdate = artifact.continuationOf
+      ? state.chapter_updates?.find((item) => item.chapter === artifact.chapter)
+      : undefined;
+    const mergeList = (previous = [], added = []) => [...new Set([...previous, ...added])];
+    const update = previousUpdate ? {
+      ...previousUpdate,
+      artifact_id: artifact.id,
+      actual_events: mergeList(previousUpdate.actual_events, delta.actual_events),
+      open_questions: mergeList(previousUpdate.open_questions, delta.open_questions),
+      resolved_threads: mergeList(previousUpdate.resolved_threads, delta.resolved_threads),
+      planned_beats: mergeList(previousUpdate.planned_beats, delta.planned_beats),
+      separated_notes: mergeSeparatedNotes(previousUpdate.separated_notes, delta.separated_notes) ?? '',
+    } : delta;
     state.chapter_updates = (state.chapter_updates ?? []).filter((item) => item.chapter !== artifact.chapter);
-    if (hasUpdates) state.chapter_updates.push(update);
+    if (hasUpdates || previousUpdate) state.chapter_updates.push(update);
   }
   for (const other of Object.values(project.artifacts)) {
     if (other.id !== artifact.id && other.base === artifact.base && other.status === 'accepted') {
@@ -787,6 +800,7 @@ export async function continueAccepted(project, artifactId, ctx = {}) {
     words: countWords(content),
     summary: addition.summary || current.summary,
     sourceId: current.id,
+    continuationOf: current.id,
     notes: 'Continue the unfinished text.',
   };
   retainChapterNotes(candidate, current);
@@ -1094,6 +1108,7 @@ function validArtifact(artifact, id) {
     && typeof artifact.type === 'string'
     && typeof artifact.content === 'string'
     && (artifact.continuityNotes === undefined || typeof artifact.continuityNotes === 'string')
+    && (artifact.continuationOf === undefined || typeof artifact.continuationOf === 'string')
     && typeof artifact.worker === 'string'
     && (artifact.separatedNotes === undefined || typeof artifact.separatedNotes === 'string')
     && ARTIFACT_STATUSES.includes(artifact.status)

@@ -22,7 +22,7 @@ function cleanArtifact(text) {
   return text.replace(/(?:\n[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*)+\s*$/, '').trim();
 }
 
-const PLANNING_HEADING = /^#{2,4}[ \t]+(?:chapter[ \t]+)?(?:thread(?:s)?(?:[ \t]+(?:tracking|updates|notes|log))?|scene[ \t]+(?:timeline|notes|tracking|updates)|continuity[ \t]+(?:notes|tracking|updates)|timeline[ \t]+(?:notes|updates|events)|planned[ \t]+beats|actual[ \t]+events|open[ \t]+questions|confirmed[ \t]+resolutions|chapter[ \t]+updates)[ \t]*$/i;
+const PLANNING_HEADING = /^#{2,4}[ \t]+(?:chapter[ \t]+)?(?:thread(?:s)?[ \t]+(?:tracking|updates|notes|log)|scene[ \t]+(?:timeline|notes|tracking|updates)|continuity[ \t]+(?:notes|tracking|updates)|timeline[ \t]+(?:notes|updates|events)|planned[ \t]+beats|actual[ \t]+events|open[ \t]+questions|confirmed[ \t]+resolutions|chapter[ \t]+updates)[ \t]*$/i;
 const PLANNING_ITEM = /^[ \t]*(?:[-*+]|\d+[.)])[ \t]+.+$/;
 
 export function separatePlanningAppendix(value) {

@@ -359,6 +359,37 @@ test('MODIFY and continuations recover assessments but preserve the pending gate
   assert.ok(acceptedCalls[1].prompt.includes('Keep the ending quiet.'));
 });
 
+test('accepted chapter continuations merge their updates without reapplying prior patches', async () => {
+  const { project } = await started();
+  const initial = await runStep(project, { action: 'draft', chapter: 1 }, makeCtx([good('First half.', {
+    complete: false,
+    proposed_changes: {
+      lore: { timeline_log: ['First-half event'] },
+      plot: { loose_threads: ['The key is missing'], act_beats: ['Find the locked room'] },
+    },
+  })]).ctx);
+  const accepted = approvePending(initial.project).project;
+  const { ctx } = makeCtx([good('Second half.', {
+    proposed_changes: {
+      lore: { timeline_log: ['Second-half event'] },
+      plot: { resolved_threads: ['The key is missing'], act_beats: ['Open the locked room'] },
+    },
+  })]);
+  const continued = await continueAccepted(accepted, initial.artifactId, ctx);
+
+  assert.equal(continued.outcome, 'accepted');
+  assert.deepEqual(continued.project.state.chapter_updates, [{
+    chapter: 1,
+    artifact_id: continued.artifactId,
+    actual_events: ['First-half event', 'Second-half event'],
+    open_questions: ['The key is missing'],
+    resolved_threads: ['The key is missing'],
+    planned_beats: ['Find the locked room', 'Open the locked room'],
+    separated_notes: '',
+  }]);
+  assert.deepEqual(continued.project.state.lore.timeline_log, ['First-half event', 'Second-half event']);
+});
+
 test('sequential YOLO drafts can continue after a missing rating is recovered', async () => {
   const { project } = await started();
   const { ctx, calls } = makeCtx(['Chapter one.', good(''), good('Chapter two.')]);

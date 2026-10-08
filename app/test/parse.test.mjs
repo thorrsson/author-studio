@@ -116,6 +116,10 @@ test('separates recognizable list-only planning appendices without treating pros
   assert.equal(ordinary.artifact, `${story}\n\n## The Timeline\nThe rain began as she reached the harbor.`);
   assert.equal(ordinary.separatedNotes, undefined);
 
+  const threadSection = splitResponse(respond(`${story}\n\n### Threads\n- Red\n- Blue`, { confidence: 0.9 }));
+  assert.equal(threadSection.artifact, `${story}\n\n### Threads\n- Red\n- Blue`);
+  assert.equal(threadSection.separatedNotes, undefined);
+
   const mixed = splitResponse(respond(`${story}\n\n## Scene timeline\n- She reaches the harbor.\n\nThe fog lifts.`, { confidence: 0.9 }));
   assert.match(mixed.artifact, /## Scene timeline/);
   assert.equal(mixed.separatedNotes, undefined);
