@@ -16,6 +16,9 @@ test('release-please tracks the existing desktop version and tag format', () => 
   assert.equal(config.packages.app.component, 'desktop');
   assert.equal(config.packages.app['include-component-in-tag'], true);
   assert.equal(config.packages.app.draft, true);
+  // Draft releases have no git tag unless forced, which hides the previous
+  // release from Release Please and breaks the tagged build checkout.
+  assert.equal(config.packages.app['force-tag-creation'], true);
   assert.equal(manifest.app, app.version);
   assert.equal(lock.version, app.version);
   assert.equal(lock.packages[''].version, app.version);
@@ -26,7 +29,11 @@ test('one manual desktop release run requests a version, tests, and auto-merges 
   assert.doesNotMatch(releaseWorkflow, /^\s+push:/m);
   assert.match(releaseWorkflow, /- uses: actions\/checkout@v7/);
   assert.match(releaseWorkflow, /uses: googleapis\/release-please-action@v4/);
-  assert.match(releaseWorkflow, /release-as: \$\{\{ inputs\.version \}\}/);
+  // The action ignores release-as with a manifest config, so the CLI is used.
+  assert.match(releaseWorkflow, /npx --yes release-please@[\d.]+ release-pr/);
+  assert.match(releaseWorkflow, /RELEASE_VERSION: \$\{\{ inputs\.version \}\}/);
+  assert.match(releaseWorkflow, /--release-as "\$RELEASE_VERSION"/);
+  assert.match(releaseWorkflow, /--path app/);
   assert.match(releaseWorkflow, /gh workflow run desktop\.yml --ref "\$branch"/);
   assert.match(releaseWorkflow, /gh run watch "\$run_id" --exit-status/);
   assert.match(releaseWorkflow, /gh pr merge "\$pr_number" --auto --squash/);
@@ -36,7 +43,8 @@ test('one manual desktop release run requests a version, tests, and auto-merges 
 });
 
 test('merged release-please releases dispatch the tagged multi-platform build', () => {
-  assert.match(releaseWorkflow, /steps\.release\.outputs\['app--release_created'\] == 'true'/);
+  assert.match(releaseWorkflow, /steps\.merged_release\.outputs\['app--release_created'\] == 'true'/);
+  assert.match(releaseWorkflow, /steps\.reviewed_release\.outputs\['app--release_created'\] == 'true'/);
   assert.match(releaseWorkflow, /uses: \.\/\.github\/workflows\/desktop-release\.yml/);
   assert.match(releaseWorkflow, /tag: \$\{\{ needs\.release\.outputs\.release_tag \}\}/);
   assert.match(buildWorkflow, /tags: \['desktop-v\*'\]/);

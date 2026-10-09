@@ -4,7 +4,8 @@
       "release-type": "node",
       "component": "desktop",
       "include-component-in-tag": true,
-      "draft": true
+      "draft": true,
+      "force-tag-creation": true
     }
   }
 }
