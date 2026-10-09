@@ -296,46 +296,37 @@ export AUTHOR_STUDIO_APPLE_ID=you@example.com AUTHOR_STUDIO_APPLE_PASSWORD=abcd-
 
 The [Desktop app workflow](../.github/workflows/desktop.yml) runs the tests on
 macOS, Windows, and Linux for every change, and builds unsigned test copies
-from `main`. The
-[Desktop release workflow](../.github/workflows/desktop-release.yml) publishes
-a release. Open **Actions → Desktop release → Run workflow** on `main`.
-Optionally enter a SemVer **version**, such as `1.0.2` or `1.1.0-beta.1`: the
-workflow updates `app/package.json` and its lockfile on a
-`desktop-release-version-<version>` branch, opens a pull request to `main`,
-and explicitly starts the desktop checks on that branch. Merge the PR after
-the required checks and reviews; the merge automatically tags the merged
-commit `desktop-v<version>` and starts the release. The workflow never pushes
-directly to protected `main` or merges the PR for you.
-Leave the field blank (or enter the current version) to release the version
-already in `app/package.json` without a PR. If `main` advances during PR
-preparation, restart the workflow on the latest commit.
-In **Settings → Actions → General → Workflow permissions**, enable
-**Allow GitHub Actions to create and approve pull requests**. The workflow
-uses `GITHUB_TOKEN` and dispatches the checks explicitly because PRs created
-with that token do not trigger normal pull-request workflows.
-Merge the version PR through GitHub or with a user/App token: a merge done
-with `GITHUB_TOKEN` will not trigger the automatic release. In that case,
-run the release workflow manually with the version field blank.
-Versions with `+build` metadata are not accepted because npm strips that
-metadata when updating the package version.
-The workflow starts a second run on the tag. That run
-builds, signs, and notarizes the Mac image, tests the signed app, builds the
-Windows and Linux installers, and publishes them all as a GitHub release,
-alongside `latest.yml`, `latest-mac.yml`, `latest-linux.yml`, and Windows
-blockmaps. Mac updates use a ZIP containing the signed, stapled app; its
-SHA-512 and size are computed after stapling. Mac differential downloads are
-disabled because rebuilding that ZIP invalidates builder's blockmap. A
-version with a suffix, such as `1.1.0-beta.1`, is published as a pre-release.
+from `main`. To release, open **Actions → Desktop release → Run workflow** on
+`main` and enter the desktop app's SemVer version, such as `1.0.4` or
+`1.1.0-beta.1`. Release Please updates the app version, lockfile, and
+changelog in a release PR. The workflow dispatches the desktop checks for that
+PR, waits for them to pass, and enables auto-merge; any required reviews or
+branch protection rules still apply.
 
-Pushing the tag yourself does the same thing:
+After the PR merges, Release Please creates the `desktop-v<version>` tag and a
+draft GitHub release. The tagged desktop release workflow builds, signs, and
+notarizes the Mac image, tests the signed app, builds the Windows and Linux
+installers, then uploads the installers and updater feeds and publishes the
+release. Mac updates use a ZIP containing the signed, stapled app; its SHA-512
+and size are computed after stapling. Mac differential downloads are disabled
+because rebuilding that ZIP invalidates builder's blockmap. Versions with a
+suffix, such as `1.1.0-beta.1`, are published as pre-releases.
+
+Release Please uses Conventional Commits to generate release notes and decide
+whether changes warrant a release (`fix:` for a patch, `feat:` for a minor,
+and `!` or `BREAKING CHANGE:` for a major version). If no releasable changes
+have landed since the last release, no release PR is created.
+
+Repository setup: enable **Allow GitHub Actions to create and approve pull
+requests** and **Allow auto-merge**. Configure the `release` environment and
+its signing secrets as described below. Pushing a `desktop-v*` tag manually
+also starts the tagged build:
 
 ```sh
-git tag desktop-v1.0.1 && git push origin desktop-v1.0.1
+git tag desktop-v1.0.4 && git push origin desktop-v1.0.4
 ```
 
-A version that's already released is refused. If a release run fails, re-run
-it from the tag's run, or run the workflow on `main` again, which reuses the
-tag while it still points at the same commit.
+If the tagged build fails, rerun that workflow from its tag.
 
 The Mac build needs these secrets, which belong to a **`release` environment**
 rather than to the repository:
