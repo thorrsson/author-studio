@@ -101,7 +101,11 @@ address, for example `192.168.1.20:11434`. Then click **Find models**.
   Security → Local Network**.
 
 Under **Advanced**, set **Context window** to what your server is configured
-for. Small local models write shorter, simpler chapters than Claude or GPT and
+for. Before each step, Author Studio also asks the server what the model can
+take right now and uses the smaller of the two. If the server still rejects a
+prompt as too large (for example, because there isn't enough free memory), the
+step is retried once or twice with less background material, and the smaller
+size is used until you restart the app. Small local models write shorter, simpler chapters than Claude or GPT and
 send more work to you for review.
 
 ### Apple Intelligence
@@ -133,12 +137,12 @@ automatically. Anything else waits for you to approve it, ask for changes, or
 reject it. Your story bible changes only when you accept something.
 
 If a writing, planning, revision, or continuation response omits a usable
-confidence rating, the app makes one assessment-only request to the same model,
-without rewriting the text. This uses the full artifact and story baseline;
+confidence rating, the app makes up to three assessment-only requests to the
+same model, without rewriting the text. This uses the full artifact and story baseline;
 if they cannot fit, the request fails, or the assessment is still unusable,
 the artifact stays unrated and waits for human review. A recovered rating never
 overrides a cutoff, an unfinished artifact, or a reported canon conflict.
-The follow-up uses additional model tokens.
+The follow-ups use additional model tokens.
 
 For multiple chapters, turn on **YOLO mode** under Write and select the last
 chapter. It keeps drafting accepted chapters and pauses whenever a chapter

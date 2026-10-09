@@ -27,7 +27,7 @@ import { markdownToText } from '../core/markdown.js';
 import { canExport, exportMarkdown, EXPORT_TARGETS } from '../core/exports.js';
 import { isPlainObject } from '../core/state.js';
 import { ProviderError } from '../providers/errors.js';
-import { inspectCompatibleServer } from '../providers/openai.js';
+import { detectContextWindow, inspectCompatibleServer } from '../providers/openai.js';
 import { CONNECTION_TYPES, connectionLabel, createProvider, defaultModelFor, profileFor } from '../providers/registry.js';
 import { createDocx } from './docx.js';
 import { AppError } from './files.js';
@@ -113,6 +113,10 @@ function send(sender, channel, data) {
   if (sender && !sender.isDestroyed?.()) sender.send(channel, data);
 }
 
+const CONTEXT_CHECK_TTL_MS = 5 * 60_000;
+// After a too-large rejection, the next attempt budgets for this share of the rejected request.
+const CONTEXT_SHRINK = 0.6;
+
 export function createHandlers({ settings, projects, resources, fetch, appleHelperPath, spawn, dialogs, shell, appInfo, onSettingsChanged }) {
   const busy = new Map();
   const pendingImports = new Map();
@@ -144,14 +148,44 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return createProvider(connection, { apiKey, fetch, appleHelperPath, ...(spawn ? { spawn } : {}) });
   }
 
-  async function modelContext(connection, { signal, onDelta } = {}) {
-    if (!connection) throw new AppError('no-connection', 'Set up an AI model in Settings first.');
-    const provider = providerFor(connection, settings.getKey(connection.id));
+  // Per connection and model: the window the server reports right now, and a
+  // smaller limit learned when the server rejected a prompt as too large.
+  const contextLimits = new Map();
+  const limitKey = (connection) => `${connection.id}\u0000${connection.baseUrl ?? ''}\u0000${connection.model ?? ''}`;
+
+  async function workingConnection(connection, apiKey, signal) {
+    if (connection.type === 'apple') return connection;
+    const key = limitKey(connection);
+    const entry = contextLimits.get(key) ?? {};
+    if (connection.type === 'compatible' && (!entry.checkedAt || Date.now() - entry.checkedAt > CONTEXT_CHECK_TTL_MS)) {
+      entry.detected = await detectContextWindow({ ...connection, apiKey, fetch, signal }).catch(() => undefined);
+      entry.checkedAt = Date.now();
+    }
+    contextLimits.set(key, entry);
+    const configured = Number(connection.contextWindow) > 0 ? Number(connection.contextWindow) : undefined;
+    const limits = [configured ?? entry.detected, entry.detected, entry.learned].filter((value) => Number(value) > 0);
+    return limits.length ? { ...connection, contextWindow: Math.min(...limits) } : connection;
+  }
+
+  function learnContextLimit(connection, rejectedTokens) {
+    const entry = contextLimits.get(limitKey(connection)) ?? {};
+    const limit = Math.floor(rejectedTokens * CONTEXT_SHRINK);
+    entry.learned = Math.min(entry.learned ?? Infinity, limit);
+    contextLimits.set(limitKey(connection), entry);
+    return profileFor({ ...connection, contextWindow: entry.learned });
+  }
+
+  async function modelContext(saved, { signal, onDelta } = {}) {
+    if (!saved) throw new AppError('no-connection', 'Set up an AI model in Settings first.');
+    const apiKey = settings.getKey(saved.id);
+    const connection = await workingConnection(saved, apiKey, signal);
+    const provider = providerFor(connection, apiKey);
     const appleContext = connection.type === 'apple' ? (await appleStatus()).contextWindow : undefined;
     const temperature = settings.get().temperature;
     return {
       generate: (request) => provider.generate(request),
       profile: profileFor(connection, { appleContext }),
+      ...(connection.type === 'apple' ? {} : { limitContext: (rejectedTokens) => learnContextLimit(saved, rejectedTokens) }),
       label: connectionLabel(connection),
       resources,
       ...(temperature === null ? {} : { temperature }),

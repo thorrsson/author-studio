@@ -403,3 +403,25 @@ test('registered handlers wrap results in envelopes and reject untrusted senders
   assert.equal((await registered.get('fail:channel')({ trusted: true })).error.code, 'cancelled');
   assert.equal((await registered.get('ok:channel')({ trusted: false }, { value: 1 })).error.code, 'forbidden');
 });
+
+test('IPC uses the window the server reports and learns a smaller one after a memory rejection', async (t) => {
+  const sizes = [];
+  const h = await harness(t, async (_req, res, entry) => {
+    const size = JSON.stringify(entry.body.messages).length;
+    sizes.push({ size, maxTokens: entry.body.max_tokens });
+    if (sizes.length === 1) {
+      json(res, 400, { error: { message: 'oMLX prefill memory guard rejected this prompt: Prefill would require ~26 GB peak. Close other apps.' } });
+      return;
+    }
+    sse(res, openaiEvents([good('# Setting\n\nA harbour town.')]));
+  });
+  h.server.requests.length = 0;
+  const { saved } = await h.call('settings:saveConnection', { connection: { type: 'compatible', baseUrl: `${h.server.url}/v1`, model: 'local-model', contextWindow: 1_024_000 } });
+  assert.equal(saved.contextWindow, 1_024_000);
+  const { project } = await h.call('projects:create', { concept: 'A harbour story. '.repeat(400), useAi: false });
+  const result = await h.call('engine:run', { projectId: project.id, op: 'step', args: { action: 'world' } });
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(sizes.length, 2);
+  assert.ok(sizes[1].maxTokens < sizes[0].maxTokens || sizes[1].size < sizes[0].size);
+  assert.ok(h.server.requests.some((request) => request.path === '/v1/models'), 'the server is asked for its window');
+});
