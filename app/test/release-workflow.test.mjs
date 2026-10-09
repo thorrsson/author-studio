@@ -37,6 +37,7 @@ test('merged release-please releases dispatch the tagged multi-platform build', 
   assert.match(releaseWorkflow, /steps\.release\.outputs\['app--release_created'\] == 'true'/);
   assert.match(releaseWorkflow, /gh workflow run desktop-release\.yml --ref "\$TAG"/);
   assert.match(buildWorkflow, /tags: \['desktop-v\*'\]/);
+  assert.doesNotMatch(buildWorkflow, /^\s+workflow_dispatch:/m);
   assert.match(buildWorkflow, /Run the desktop release build from a desktop-v\* tag/);
   assert.match(buildWorkflow, /GITHUB_REF_NAME.*desktop-v\$version/);
   assert.match(buildWorkflow, /name: macOS \(signed and notarized\)/);
