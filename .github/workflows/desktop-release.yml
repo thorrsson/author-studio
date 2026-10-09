@@ -9,6 +9,12 @@ name: Desktop release build
 on:
   push:
     tags: ['desktop-v*']
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag created by Release Please
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -28,27 +34,31 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - name: Check the tag matches the app version
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF" != refs/tags/desktop-v* ]]; then
-            echo "::error::Run the desktop release build from a desktop-v* tag. Start new releases with the Desktop release workflow."
+          if [[ "$RELEASE_TAG" != desktop-v* ]]; then
+            echo "::error::The desktop release build requires a desktop-v* tag."
             exit 1
           fi
           version="$(node -p "require('./package.json').version")"
-          if [[ "$GITHUB_REF_NAME" != "desktop-v$version" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in app/package.json."
+          if [[ "$RELEASE_TAG" != "desktop-v$version" ]]; then
+            echo "::error::Tag $RELEASE_TAG does not match version $version in app/package.json."
             exit 1
           fi
           # Only release commits already on the default branch. "behind" means
           # the tagged commit is an ancestor of it.
-          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$GITHUB_SHA" --jq .status)"
+          tag_sha="$(git rev-parse HEAD)"
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$tag_sha" --jq .status)"
           if [[ "$status" != identical && "$status" != behind ]]; then
-            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on $DEFAULT_BRANCH. Merge it to $DEFAULT_BRANCH first, then retry the release."
+            echo "::error::$RELEASE_TAG points at $tag_sha, which is not on $DEFAULT_BRANCH. Merge it to $DEFAULT_BRANCH first, then retry the release."
             exit 1
           fi
           echo "Building Author Studio $version"
@@ -176,6 +186,8 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -214,6 +226,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -240,6 +254,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -260,10 +276,10 @@ jobs:
           done
           prerelease=()
           [[ "$VERSION" == *-* ]] && prerelease=(--prerelease)
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" artifacts/* \
+            gh release create "$RELEASE_TAG" artifacts/* \
               --repo "$GITHUB_REPOSITORY" \
               --draft \
               --title "Author Studio desktop $VERSION" \
@@ -271,7 +287,7 @@ jobs:
               --verify-tag \
               ${prerelease[@]+"${prerelease[@]}"}
           fi
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
-          url="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          url="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json url --jq .url)"
           echo "Published $url"
           echo "### Published [Author Studio desktop $VERSION]($url)" >> "$GITHUB_STEP_SUMMARY"
