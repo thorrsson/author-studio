@@ -1,0 +1,10 @@
+{
+  "packages": {
+    "app": {
+      "release-type": "node",
+      "component": "desktop",
+      "include-component-in-tag": true,
+      "draft": true
+    }
+  }
+}

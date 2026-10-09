@@ -11,6 +11,9 @@ on:
       - 'agents/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
+      - '.github/workflows/release-please.yml'
+      - '.release-please-config.json'
+      - '.release-please-manifest.json'
   pull_request:
     paths:
       - 'app/**'
@@ -18,6 +21,9 @@ on:
       - 'agents/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
+      - '.github/workflows/release-please.yml'
+      - '.release-please-config.json'
+      - '.release-please-manifest.json'
   workflow_dispatch:
 
 permissions:

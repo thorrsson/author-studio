@@ -1,0 +1,142 @@
+name: Desktop release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Desktop app version to release, e.g. 1.0.4 or 1.1.0-beta.1'
+        required: true
+        type: string
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: release-please-desktop
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event_name != 'pull_request_review' ||
+      (github.event.review.state == 'approved' &&
+       github.event.pull_request.base.ref == github.event.repository.default_branch &&
+       startsWith(github.event.pull_request.head.ref, 'release-please--'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Create or update the desktop release PR
+        id: release
+        if: github.event_name != 'pull_request_review'
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: ${{ github.event.repository.default_branch }}
+          release-as: ${{ inputs.version }}
+
+      - name: Test and auto-merge the requested release PR
+        id: auto_merge
+        if: github.event_name == 'workflow_dispatch' && steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+        run: |
+          set -euo pipefail
+          pr_number="$(node -e '
+            const prs = JSON.parse(process.env.RELEASE_PRS);
+            if (prs.length !== 1 || !Number.isInteger(prs[0].number)) {
+              throw new Error(`Expected one release PR, got ${prs.length}`);
+            }
+            process.stdout.write(String(prs[0].number));
+          ')"
+          pr="$(gh pr view "$pr_number" --json url,baseRefName,headRefName,headRefOid)"
+          base="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).baseRefName)' "$pr")"
+          branch="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).headRefName)' "$pr")"
+          sha="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).headRefOid)' "$pr")"
+          url="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).url)' "$pr")"
+          if [[ "$base" != "$GITHUB_DEFAULT_BRANCH" || "$branch" != release-please--* ]]; then
+            echo "::error::Refusing to test or merge unexpected release PR $url ($branch -> $base)."
+            exit 1
+          fi
+
+          gh workflow run desktop.yml --ref "$branch"
+          run_id=""
+          for attempt in {1..60}; do
+            run_id="$(gh run list --workflow desktop.yml --branch "$branch" --commit "$sha" \
+              --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+          if [[ -z "$run_id" ]]; then
+            echo "::error::The desktop checks did not start for release PR $url."
+            exit 1
+          fi
+          gh run watch "$run_id" --exit-status
+          gh pr merge "$pr_number" --auto --squash
+          for attempt in {1..12}; do
+            state="$(gh pr view "$pr_number" --json state --jq .state)"
+            if [[ "$state" == MERGED ]]; then
+              echo "merged=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "merged=false" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for an approved release PR to merge
+        if: github.event_name == 'pull_request_review'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..120}; do
+            state="$(gh pr view "$PR_NUMBER" --json state --jq .state)"
+            if [[ "$state" == MERGED ]]; then
+              exit 0
+            fi
+            if [[ "$state" == CLOSED ]]; then
+              echo "::error::The approved release PR was closed without merging."
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::Timed out waiting for the approved release PR to merge."
+          exit 1
+
+      - name: Create the release after the auto-merge
+        id: merged_release
+        if: github.event_name == 'workflow_dispatch' && steps.auto_merge.outputs.merged == 'true'
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: ${{ github.event.repository.default_branch }}
+
+      - name: Create the release after an approved merge
+        id: reviewed_release
+        if: github.event_name == 'pull_request_review'
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+          target-branch: ${{ github.event.repository.default_branch }}
+
+      - name: Start the tagged desktop build
+        if: >-
+          steps.release.outputs['app--release_created'] == 'true' ||
+          steps.merged_release.outputs['app--release_created'] == 'true' ||
+          steps.reviewed_release.outputs['app--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs['app--tag_name'] || steps.merged_release.outputs['app--tag_name'] || steps.reviewed_release.outputs['app--tag_name'] }}
+        run: gh workflow run desktop-release.yml --ref "$TAG"
