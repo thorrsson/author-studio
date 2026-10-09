@@ -1,7 +1,7 @@
 {
   "name": "author-studio-desktop",
   "productName": "Author Studio",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Desktop app for Author Studio, a human-directed fiction-writing studio that works with Claude, OpenAI, local AI servers, and Apple Intelligence.",
   "author": "Author Studio contributors",
   "license": "MIT",
