@@ -438,7 +438,7 @@ async function generateFitted(ctx, build, onText) {
       return { prompt, response: await callModel(ctx, prompt, onText) };
     } catch (error) {
       if (!(error instanceof ProviderError) || error.code !== 'too-large' || attempt >= CONTEXT_SHRINKS || !ctx.limitContext) throw error;
-      const smaller = ctx.limitContext(prompt.inputTokens + prompt.maxTokens);
+      const smaller = await ctx.limitContext(prompt.inputTokens + prompt.maxTokens);
       if (!smaller || smaller.contextWindow >= ctx.profile.contextWindow) throw error;
       ctx.profile = smaller;
       prompt = build(ctx.profile);

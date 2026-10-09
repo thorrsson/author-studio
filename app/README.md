@@ -104,8 +104,10 @@ Under **Advanced**, set **Context window** to what your server is configured
 for. Before each step, Author Studio also asks the server what the model can
 take right now and uses the smaller of the two. If the server still rejects a
 prompt as too large (for example, because there isn't enough free memory), the
-step is retried once or twice with less background material, and the smaller
-size is used until you restart the app. Small local models write shorter, simpler chapters than Claude or GPT and
+step is retried once or twice with less background material. The smaller size
+is saved for that model on that server only; other models on the same server,
+and the same model on another server, are not affected. Changing **Context
+window** for the connection clears it. Small local models write shorter, simpler chapters than Claude or GPT and
 send more work to you for review.
 
 ### Apple Intelligence

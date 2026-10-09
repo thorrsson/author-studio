@@ -13,6 +13,8 @@ const SERVERS = ['ollama', 'lmstudio', 'llamacpp', 'generic'];
 const THEMES = ['system', 'light', 'dark'];
 const MAX_CONNECTIONS = 40;
 const MAX_KEY = 1000;
+const MAX_CONTEXT_LIMITS = 200;
+const MIN_LEARNED_CONTEXT = 1024;
 
 const KEY_STORAGE_MESSAGES = {
   encrypted: 'API keys are encrypted with your system keychain.',
@@ -28,7 +30,32 @@ export function defaultSettings() {
     reviewers: { a: null, b: null },
     temperature: null,
     theme: 'system',
+    contextLimits: {},
   };
+}
+
+// Learned context limits belong to one model on one host, never to a whole
+// connection type or to every model on a server.
+export function contextLimitKey(connection) {
+  const type = connection?.type;
+  const model = String(connection?.model ?? '').trim();
+  if (!type || type === 'apple' || !model) return '';
+  const host = type === 'compatible' ? addressOrigin(connection.baseUrl) : addressOrigin(connection.baseUrl || CONNECTION_TYPES[type]?.baseUrl) || type;
+  return host ? `${type} ${host} ${model}` : '';
+}
+
+function sanitizeContextLimits(raw) {
+  const limits = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return limits;
+  const entries = Object.entries(raw)
+    .filter(([key, value]) => typeof key === 'string' && key.length <= 400 && !['__proto__', 'constructor', 'prototype'].includes(key)
+      && positiveInt(value?.tokens, 2_000_000) >= MIN_LEARNED_CONTEXT)
+    .sort(([, a], [, b]) => String(b.learnedAt ?? '').localeCompare(String(a.learnedAt ?? '')))
+    .slice(0, MAX_CONTEXT_LIMITS);
+  for (const [key, value] of entries) {
+    limits[key] = { tokens: positiveInt(value.tokens, 2_000_000), learnedAt: line(value.learnedAt, 40) };
+  }
+  return limits;
 }
 
 function line(value, max) {
@@ -84,6 +111,7 @@ function sanitizeSettings(raw) {
   settings.reviewers = { a: known(raw.reviewers?.a), b: known(raw.reviewers?.b) };
   settings.temperature = sanitizeTemperature(raw.temperature);
   settings.theme = THEMES.includes(raw.theme) ? raw.theme : 'system';
+  settings.contextLimits = sanitizeContextLimits(raw.contextLimits);
   return settings;
 }
 
@@ -212,11 +240,39 @@ export async function createSettingsStore({ dir, safeStorage, keyStorage } = {})
         }
         await setKey(saved.id, key);
       }
+      // Changing a server's configured window means the author reconfigured
+      // it, so a limit learned for that model and host starts over.
+      if (existing?.contextWindow !== saved.contextWindow) delete settings.contextLimits[contextLimitKey(saved)];
       if (existing) settings.connections[settings.connections.indexOf(existing)] = saved;
       else settings.connections.push(saved);
       if (!settings.activeConnectionId) settings.activeConnectionId = saved.id;
       await saveSettings();
       return structuredClone(saved);
+    },
+
+    contextLimit(connectionInfo) {
+      const key = contextLimitKey(connectionInfo);
+      return key && Object.hasOwn(settings.contextLimits, key) ? settings.contextLimits[key].tokens : null;
+    },
+
+    // Only ever lowers the saved limit for this model and host.
+    async saveContextLimit(connectionInfo, tokens, now = new Date()) {
+      const key = contextLimitKey(connectionInfo);
+      const value = Math.max(MIN_LEARNED_CONTEXT, Math.floor(Number(tokens)));
+      if (!key || !Number.isFinite(value)) return null;
+      const current = Object.hasOwn(settings.contextLimits, key) ? settings.contextLimits[key].tokens : Infinity;
+      if (value >= current) return current;
+      settings.contextLimits[key] = { tokens: value, learnedAt: now.toISOString() };
+      settings.contextLimits = sanitizeContextLimits(settings.contextLimits);
+      await saveSettings();
+      return value;
+    },
+
+    async clearContextLimit(connectionInfo) {
+      const key = contextLimitKey(connectionInfo);
+      if (!key || !Object.hasOwn(settings.contextLimits, key)) return;
+      delete settings.contextLimits[key];
+      await saveSettings();
     },
 
     async deleteConnection(id) {

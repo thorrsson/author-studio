@@ -32,7 +32,7 @@ import { CONNECTION_TYPES, connectionLabel, createProvider, defaultModelFor, pro
 import { createDocx } from './docx.js';
 import { AppError } from './files.js';
 import { isProjectId } from './project-store.js';
-import { sanitizeConnection } from './settings-store.js';
+import { contextLimitKey, sanitizeConnection } from './settings-store.js';
 
 const MODEL_OPS = new Set(['step', 'modify', 'continuePending', 'continueAccepted', 'secondOpinion']);
 const OPS = new Set([...MODEL_OPS, 'approve', 'reject', 'forceReview', 'addText', 'updateBrief']);
@@ -148,31 +148,32 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return createProvider(connection, { apiKey, fetch, appleHelperPath, ...(spawn ? { spawn } : {}) });
   }
 
-  // Per connection and model: the window the server reports right now, and a
-  // smaller limit learned when the server rejected a prompt as too large.
-  const contextLimits = new Map();
-  const limitKey = (connection) => `${connection.id}\u0000${connection.baseUrl ?? ''}\u0000${connection.model ?? ''}`;
+  // What each server reported recently for a model, so every step does not
+  // re-ask. Limits learned from rejections are saved per model and host.
+  const detectedContext = new Map();
 
   async function workingConnection(connection, apiKey, signal) {
     if (connection.type === 'apple') return connection;
-    const key = limitKey(connection);
-    const entry = contextLimits.get(key) ?? {};
-    if (connection.type === 'compatible' && (!entry.checkedAt || Date.now() - entry.checkedAt > CONTEXT_CHECK_TTL_MS)) {
-      entry.detected = await detectContextWindow({ ...connection, apiKey, fetch, signal }).catch(() => undefined);
-      entry.checkedAt = Date.now();
+    const key = contextLimitKey(connection);
+    let detected;
+    if (connection.type === 'compatible' && key) {
+      const cached = detectedContext.get(key);
+      if (cached && Date.now() - cached.checkedAt <= CONTEXT_CHECK_TTL_MS) detected = cached.value;
+      else {
+        detected = await detectContextWindow({ ...connection, apiKey, fetch, signal }).catch(() => undefined);
+        detectedContext.set(key, { value: detected, checkedAt: Date.now() });
+      }
     }
-    contextLimits.set(key, entry);
     const configured = Number(connection.contextWindow) > 0 ? Number(connection.contextWindow) : undefined;
-    const limits = [configured ?? entry.detected, entry.detected, entry.learned].filter((value) => Number(value) > 0);
+    const limits = [configured ?? detected, detected, settings.contextLimit(connection)].filter((value) => Number(value) > 0);
     return limits.length ? { ...connection, contextWindow: Math.min(...limits) } : connection;
   }
 
-  function learnContextLimit(connection, rejectedTokens) {
-    const entry = contextLimits.get(limitKey(connection)) ?? {};
-    const limit = Math.floor(rejectedTokens * CONTEXT_SHRINK);
-    entry.learned = Math.min(entry.learned ?? Infinity, limit);
-    contextLimits.set(limitKey(connection), entry);
-    return profileFor({ ...connection, contextWindow: entry.learned });
+  async function learnContextLimit(connection, current, rejectedTokens) {
+    const target = Math.floor(Math.min(rejectedTokens, current.contextWindow) * CONTEXT_SHRINK);
+    const saved = await settings.saveContextLimit(connection, target);
+    if (!saved || saved >= current.contextWindow) return null;
+    return profileFor({ ...current, contextWindow: saved });
   }
 
   async function modelContext(saved, { signal, onDelta } = {}) {
@@ -185,7 +186,7 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return {
       generate: (request) => provider.generate(request),
       profile: profileFor(connection, { appleContext }),
-      ...(connection.type === 'apple' ? {} : { limitContext: (rejectedTokens) => learnContextLimit(saved, rejectedTokens) }),
+      ...(connection.type === 'apple' ? {} : { limitContext: (rejectedTokens) => learnContextLimit(saved, connection, rejectedTokens) }),
       label: connectionLabel(connection),
       resources,
       ...(temperature === null ? {} : { temperature }),
