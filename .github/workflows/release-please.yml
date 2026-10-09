@@ -33,32 +33,49 @@ jobs:
       release_tag: ${{ steps.build.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
+      # The action ignores its release-as input when a manifest config is used,
+      # so the CLI is called directly to apply the requested version.
       - name: Create or update the desktop release PR
         id: release
-        if: github.event_name != 'pull_request_review'
-        uses: googleapis/release-please-action@v4
-        with:
-          config-file: .release-please-config.json
-          manifest-file: .release-please-manifest.json
-          target-branch: ${{ github.event.repository.default_branch }}
-          release-as: ${{ inputs.version }}
-
-      - name: Test and auto-merge the requested release PR
-        id: auto_merge
-        if: github.event_name == 'workflow_dispatch' && steps.release.outputs.prs_created == 'true'
+        if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          RELEASE_PRS: ${{ steps.release.outputs.prs }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          pr_number="$(node -e '
-            const prs = JSON.parse(process.env.RELEASE_PRS);
-            if (prs.length !== 1 || !Number.isInteger(prs[0].number)) {
-              throw new Error(`Expected one release PR, got ${prs.length}`);
-            }
-            process.stdout.write(String(prs[0].number));
-          ')"
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$RELEASE_VERSION' is not a valid version such as 1.2.1 or 1.3.0-beta.1."
+            exit 1
+          fi
+          npx --yes release-please@17.3.0 release-pr \
+            --token "$GH_TOKEN" \
+            --repo-url "$GITHUB_REPOSITORY" \
+            --target-branch "$GITHUB_DEFAULT_BRANCH" \
+            --config-file .release-please-config.json \
+            --manifest-file .release-please-manifest.json \
+            --path app \
+            --release-as "$RELEASE_VERSION"
+          pr_number="$(gh pr list --base "$GITHUB_DEFAULT_BRANCH" \
+            --head release-please--branches--main--components--desktop \
+            --state open --json number,title \
+            --jq ".[] | select(.title | endswith(\" $RELEASE_VERSION\")) | .number")"
+          if [[ -z "$pr_number" ]]; then
+            echo "::error::No open release PR for desktop $RELEASE_VERSION was found."
+            exit 1
+          fi
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Test and auto-merge the requested release PR
+        id: auto_merge
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ steps.release.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          pr_number="$PR_NUMBER"
           pr="$(gh pr view "$pr_number" --json url,baseRefName,headRefName,headRefOid)"
           base="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).baseRefName)' "$pr")"
           branch="$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).headRefName)' "$pr")"
@@ -135,11 +152,10 @@ jobs:
       - name: Queue the tagged desktop build
         id: build
         if: >-
-          steps.release.outputs['app--release_created'] == 'true' ||
           steps.merged_release.outputs['app--release_created'] == 'true' ||
           steps.reviewed_release.outputs['app--release_created'] == 'true'
         env:
-          TAG: ${{ steps.release.outputs['app--tag_name'] || steps.merged_release.outputs['app--tag_name'] || steps.reviewed_release.outputs['app--tag_name'] }}
+          TAG: ${{ steps.merged_release.outputs['app--tag_name'] || steps.reviewed_release.outputs['app--tag_name'] }}
         run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
   desktop_build:
