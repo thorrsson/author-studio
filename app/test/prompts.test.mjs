@@ -60,7 +60,10 @@ test('full prompts carry the shared worker guide and the response contract', asy
   assert.match(request.prompt, /No canon has been accepted yet\./);
   assert.match(request.prompt, /# Task\nAct as the World Designer/);
   assert.match(request.prompt, /Reserve room for the assessment/);
-  assert.ok(request.prompt.includes(`End with the ${ASSESSMENT_HEADING}`));
+  const tail = request.prompt.slice(request.prompt.lastIndexOf('# Task'));
+  assert.ok(tail.includes(`end your reply with the line ${ASSESSMENT_HEADING}`));
+  assert.match(tail, /"confidence" is required/);
+  assert.ok(request.prompt.trimEnd().endsWith('}}'), 'the reply template is the last thing the model reads');
   assert.equal(request.maxTokens, 8192);
   assert.deepEqual(request.contextNotes, []);
   assert.ok(fits(request, FULL));

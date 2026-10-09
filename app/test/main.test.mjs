@@ -8,7 +8,7 @@ import { startProject } from '../src/core/engine.js';
 import { readJsonFile, writeFileAtomic } from '../src/main/files.js';
 import { createHandlers, registerHandlers, safeFileName, throttle, toFailure } from '../src/main/ipc.js';
 import { createProjectStore, isProjectId } from '../src/main/project-store.js';
-import { createSettingsStore, sanitizeConnection } from '../src/main/settings-store.js';
+import { contextLimitKey, createSettingsStore, sanitizeConnection } from '../src/main/settings-store.js';
 import { good, resources, respond, template } from './helpers.mjs';
 import { json, openaiEvents, pause, sse, startServer } from './mock-server.mjs';
 
@@ -402,4 +402,63 @@ test('registered handlers wrap results in envelopes and reject untrusted senders
   assert.deepEqual(await registered.get('ok:channel')({ trusted: true }, 'not an object'), { ok: true, value: { echo: undefined } });
   assert.equal((await registered.get('fail:channel')({ trusted: true })).error.code, 'cancelled');
   assert.equal((await registered.get('ok:channel')({ trusted: false }, { value: 1 })).error.code, 'forbidden');
+});
+
+test('IPC uses the window the server reports and learns a smaller one after a memory rejection', async (t) => {
+  const sizes = [];
+  let rejected = false;
+  const h = await harness(t, async (_req, res, entry) => {
+    const size = JSON.stringify(entry.body.messages).length;
+    sizes.push({ size, maxTokens: entry.body.max_tokens });
+    if (!rejected) {
+      rejected = true;
+      json(res, 400, { error: { message: 'oMLX prefill memory guard rejected this prompt: Prefill would require ~26 GB peak. Close other apps.' } });
+      return;
+    }
+    sse(res, openaiEvents([good('# Setting\n\nA harbour town.')]));
+  });
+  h.server.requests.length = 0;
+  const { saved } = await h.call('settings:saveConnection', { connection: { type: 'compatible', baseUrl: `${h.server.url}/v1`, model: 'local-model', contextWindow: 1_024_000 } });
+  assert.equal(saved.contextWindow, 1_024_000);
+  const { project } = await h.call('projects:create', { concept: 'A harbour story. '.repeat(400), useAi: false });
+  const result = await h.call('engine:run', { projectId: project.id, op: 'step', args: { action: 'world' } });
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(sizes.length, 2);
+  assert.ok(sizes[1].maxTokens < sizes[0].maxTokens || sizes[1].size < sizes[0].size);
+  assert.ok(h.server.requests.some((request) => request.path === '/v1/models'), 'the server is asked for its window');
+
+  const learned = h.settings.contextLimit(saved);
+  assert.ok(learned > 0 && learned < 1_024_000);
+  const restarted = await createSettingsStore({ dir: h.dir, safeStorage: fakeSafeStorage });
+  assert.equal(restarted.contextLimit(saved), learned, 'the learned limit survives a restart');
+  assert.equal(restarted.contextLimit({ ...saved, model: 'other-model' }), null, 'other models on the host are unaffected');
+  assert.equal(restarted.contextLimit({ ...saved, baseUrl: 'http://192.168.1.20:9701/v1' }), null, 'the same model on another host is unaffected');
+  assert.equal(restarted.contextLimit({ ...saved, id: 'another-connection', name: 'Copy' }), learned, 'another connection to the same model and host shares it');
+
+  sizes.length = 0;
+  await h.call('engine:run', { projectId: project.id, op: 'step', args: { action: 'plot' } });
+  assert.equal(sizes.length, 1, 'the saved limit is applied before the first request');
+});
+
+test('saved context limits are keyed by model and host, only shrink, and reset when the window is edited', async (t) => {
+  const dir = await tempDir(t);
+  const store = await createSettingsStore({ dir, safeStorage: fakeSafeStorage });
+  const local = await store.saveConnection({ type: 'compatible', baseUrl: 'localhost:9701', model: 'nemo', contextWindow: 32768 });
+  assert.equal(contextLimitKey(local), 'compatible http://localhost:9701 nemo');
+  assert.equal(contextLimitKey({ ...local, baseUrl: 'http://localhost:9701/v1' }), contextLimitKey(local));
+  assert.equal(contextLimitKey({ type: 'apple', model: 'apple-on-device' }), '');
+  assert.notEqual(contextLimitKey({ type: 'openai', model: 'nemo' }), contextLimitKey(local));
+
+  assert.equal(await store.saveContextLimit(local, 8000), 8000);
+  assert.equal(await store.saveContextLimit(local, 12000), 8000, 'a larger value never replaces a learned limit');
+  assert.equal(store.contextLimit({ ...local, model: 'qwen' }), null);
+
+  await store.saveConnection({ ...local, name: 'Renamed' });
+  assert.equal(store.contextLimit(local), 8000, 'unrelated edits keep the limit');
+  const edited = await store.saveConnection({ ...local, contextWindow: 16384 });
+  assert.equal(store.contextLimit(edited), null, 'editing the window starts over');
+
+  await writeFile(path.join(dir, 'settings.json'), JSON.stringify({ contextLimits: { __proto__: { tokens: 5000 }, bad: { tokens: 'x' }, ok: { tokens: 4096, learnedAt: 'now' } } }));
+  const reloaded = await createSettingsStore({ dir, safeStorage: fakeSafeStorage });
+  assert.deepEqual(Object.keys(reloaded.get().contextLimits), ['ok']);
 });

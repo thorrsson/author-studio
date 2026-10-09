@@ -5,7 +5,7 @@ import test from 'node:test';
 import { createAnthropicProvider, defaultAnthropicModel } from '../src/providers/anthropic.js';
 import { createAppleProvider } from '../src/providers/apple.js';
 import { errorFromNetwork, ProviderError } from '../src/providers/errors.js';
-import { createOpenAIProvider, defaultOpenAIModel, inspectCompatibleServer, isOpenAIChatModel, normalizeBaseUrl } from '../src/providers/openai.js';
+import { createOpenAIProvider, defaultOpenAIModel, detectContextWindow, inspectCompatibleServer, isOpenAIChatModel, normalizeBaseUrl } from '../src/providers/openai.js';
 import { connectionLabel, createProvider, profileFor } from '../src/providers/registry.js';
 import { anthropicEvents, json, openaiEvents, pause, sse, startServer } from './mock-server.mjs';
 
@@ -192,6 +192,38 @@ test('compatible server discovery normalizes addresses and reads context windows
   assert.equal(normalizeBaseUrl('https://example.com/openai/v1/'), 'https://example.com/openai/v1');
   assert.equal(normalizeBaseUrl('ftp://example.com'), '');
   assert.equal(normalizeBaseUrl(''), '');
+});
+
+test('detects the window a running server reports for the selected model', async (t) => {
+  const advertised = await startServer({
+    'GET /v1/models': (req, res) => json(res, 200, { data: [{ id: 'other', max_model_len: 4096 }, { id: 'nemo', max_model_len: 32768 }] }),
+  });
+  t.after(advertised.close);
+  assert.equal(await detectContextWindow({ baseUrl: advertised.url, model: 'nemo', server: 'generic', fetch }), 32768);
+  assert.equal(await detectContextWindow({ baseUrl: advertised.url, model: 'missing', server: 'generic', fetch }), undefined);
+
+  const loaded = await startServer({
+    'GET /v1/models': (req, res) => json(res, 200, { data: [{ id: 'qwen', max_model_len: 131072 }] }),
+    'GET /props': (req, res) => json(res, 200, { default_generation_settings: { n_ctx: 12288 } }),
+  });
+  t.after(loaded.close);
+  assert.equal(await detectContextWindow({ baseUrl: `${loaded.url}/v1`, model: 'qwen', server: 'llamacpp', fetch }), 12288);
+
+  const ollama = await startServer({
+    'GET /v1/models': (req, res) => json(res, 200, { data: [{ id: 'llama3.2' }] }),
+    'POST /api/show': (req, res, entry) => json(res, 200, { model_info: { 'llama.context_length': entry.body.model === 'llama3.2' ? 131072 : 0 } }),
+  });
+  t.after(ollama.close);
+  assert.equal(await detectContextWindow({ baseUrl: `${ollama.url}/v1`, model: 'llama3.2', server: 'ollama', fetch }), 131072);
+});
+
+test('memory-limited prompt rejections from local servers count as too large', async (t) => {
+  const server = await startServer({
+    'POST /v1/chat/completions': (req, res) => json(res, 400, { error: { message: 'oMLX prefill memory guard rejected this prompt: Prefill would require ~26.13 GB peak. Close other apps.' } }),
+  });
+  t.after(server.close);
+  const provider = createOpenAIProvider({ baseUrl: `${server.url}/v1`, model: 'nemo', fetch, compatible: true });
+  await assert.rejects(provider.generate({ system: 's', prompt: 'p', maxTokens: 100 }), (error) => error.code === 'too-large');
 });
 
 test('Ollama is called natively so the context window is honored', async (t) => {

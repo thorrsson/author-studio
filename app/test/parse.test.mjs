@@ -229,3 +229,30 @@ test('counts words across languages and punctuation', () => {
   assert.equal(countWords(''), 0);
   assert.equal(countWords('Ünïcödé wörds 123'), 3);
 });
+
+test('reads ratings written as percentages, out-of-100 numbers, or "x/10"', () => {
+  assert.equal(toConfidence('85%'), 0.85);
+  assert.equal(toConfidence(85), 0.85);
+  assert.equal(toConfidence('8/10'), 0.8);
+  assert.equal(toConfidence('0.7'), 0.7);
+  assert.equal(toConfidence(1.5), null);
+});
+
+test('finds ratings under other key casings, nesting, and "Confidence Score" lines', () => {
+  const heading = '## Author Studio Assessment';
+  for (const body of [
+    '```json\n{"Confidence": "85%", "complete": true}\n```',
+    '```json\n{"assessment": {"confidence": 0.85, "complete": true}}\n```',
+    '**Confidence Score:** 85%\n**Complete:** yes',
+  ]) {
+    const split = splitResponse(`Story.\n\n${heading}\n${body}`);
+    assert.equal(split.artifact, 'Story.');
+    assert.equal(parseAssessment(split.assessmentText).confidence, 0.85, body);
+  }
+});
+
+test('a trailing JSON block with assessment keys but no rating is kept out of the artifact', () => {
+  const split = splitResponse('Story.\n\n```json\n{"rationale": "ok", "proposed_changes": {"plot": {}}}\n```');
+  assert.equal(split.artifact, 'Story.');
+  assert.equal(parseAssessment(split.assessmentText).confidence, null);
+});

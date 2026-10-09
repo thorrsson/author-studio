@@ -204,17 +204,17 @@ test('blocks other steps while a gate is pending', async () => {
   assert.throws(() => rejectPending(project), assertCode('no-gate'));
 });
 
-test('a missing assessment stays unassessed and gated after one unusable follow-up', async () => {
+test('a missing assessment stays unassessed and gated after unusable follow-ups', async () => {
   const { project, ctx } = await started();
-  const { ctx: model, calls } = makeCtx(['# Setting\n\nJust prose, no assessment.', 'No rating.']);
+  const { ctx: model, calls } = makeCtx(['# Setting\n\nJust prose, no assessment.', 'No rating.', 'No rating.', 'No rating.']);
   ctx.generate = model.generate;
   const { project: gated, outcome } = await runStep(project, { action: 'world' }, ctx);
   assert.equal(outcome, 'gated');
   assert.equal(gated.state.pending_review.confidence, null);
   assert.match(gated.state.pending_review.flags[0], /unassessed/);
   assert.equal(gated.state.orchestrator_log.at(-1).confidence, null);
-  assert.equal(calls.length, 2);
-  assert.match(gated.artifacts['world-1'].flags.join(' '), /one follow-up/);
+  assert.equal(calls.length, 4);
+  assert.match(gated.artifacts['world-1'].flags.join(' '), /3 follow-ups/);
   assertValid(gated);
 });
 
@@ -296,11 +296,11 @@ test('never accepts a truncated or incomplete assessment follow-up', async () =>
     '{"confidence": 2, "complete": true}',
     '```json\n{broken}\n```',
   ]) {
-    const { ctx, calls } = makeCtx(['Draft text.', followUp]);
+    const { ctx, calls } = makeCtx(['Draft text.', followUp, followUp, followUp]);
     const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
     assert.equal(result.outcome, 'gated');
     assert.equal(result.project.state.pending_review.confidence, null);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 4);
   }
 });
 
@@ -314,6 +314,33 @@ test('an oversized artifact is preserved and gated instead of assessing an excer
   const artifact = result.project.artifacts[result.artifactId];
   assert.equal(artifact.content, content.trim());
   assert.match(artifact.flags.join(' '), /full artifact and story baseline do not fit/);
+});
+
+test('a too-large rejection rebuilds the prompt for a smaller working window', async () => {
+  const { project } = await started();
+  const { ctx, calls } = makeCtx([
+    () => { throw new ProviderError('too-large', 'Too long.'); },
+    good('# Chapter 1\n\nThe bell rang.'),
+  ]);
+  const limits = [];
+  ctx.limitContext = (tokens) => {
+    limits.push(tokens);
+    return { ...COMPACT, contextWindow: 4096 };
+  };
+  const result = await runStep(project, { action: 'draft', chapter: 1 }, ctx);
+  assert.equal(result.outcome, 'accepted');
+  assert.equal(calls.length, 2);
+  assert.equal(limits.length, 1);
+  assert.ok(limits[0] > 4096);
+  assert.ok(calls[1].prompt.length < calls[0].prompt.length);
+  assert.ok(calls[1].maxTokens < calls[0].maxTokens);
+});
+
+test('without a smaller window a too-large rejection is reported', async () => {
+  const { project } = await started();
+  const { ctx } = makeCtx([() => { throw new ProviderError('too-large', 'Too long.'); }]);
+  ctx.limitContext = () => null;
+  await assert.rejects(runStep(project, { action: 'draft', chapter: 1 }, ctx), (error) => error.code === 'too-large');
 });
 
 test('a provider failure during recovery preserves the draft and explains the gate', async () => {

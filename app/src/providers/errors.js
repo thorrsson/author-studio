@@ -37,7 +37,8 @@ function errorParts(body) {
   };
 }
 
-const CONTEXT_PATTERN = /context[ _-]?(length|window|size)|prompt is too long|too many tokens|maximum context|context_length_exceeded|input is too long|exceeds? the (model|available)/i;
+// Local servers also reject prompts that do not fit in free memory, even below the advertised window.
+const CONTEXT_PATTERN = /context[ _-]?(length|window|size)|prompt is too long|too many tokens|maximum context|context_length_exceeded|input is too long|exceeds? the (model|available)|context too large|prefill (memory|capacity|context|would require)|memory guard|(not enough|insufficient|out of) memory|kv[ -]?cache (is )?full/i;
 
 function retryAfterSeconds(response) {
   const value = response.headers?.get?.('retry-after');

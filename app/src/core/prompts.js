@@ -57,13 +57,24 @@ function wrapped(tag, text, attributes = '', prefix = '') {
   };
 }
 
+// Placeholders instead of sample values: small models copy samples, and a copied placeholder fails safe.
+function replyTemplate(mode) {
+  const editKeys = mode === 'edit' ? '"change_summary": "<what you changed>", "unresolved": [<problems you could not fix>], ' : '';
+  return `{"confidence": <your honest rating from 0 to 1 of how well the artifact fits the brief and canon>, "rationale": "<one sentence>", "flags": [<concerns, if any>], "contradictions": [<conflicts with accepted canon, if any>], "complete": <true, or false if you could not finish>, "summary": "<one sentence>", ${editKeys}"proposed_changes": {"lore": {"tech_level": "", "key_factions": [], "timeline_log": []}, "plot": {"act_beats": [], "loose_threads": [], "resolved_threads": [], "twist_map": []}, "characters": [{"name": "", "role": "", "arc_stage": "", "voice_notes": ""}]}}`;
+}
+
+// Repeated as the last thing the model reads, because long material between
+// the system prompt and the reply makes models forget the assessment.
+function replyReminder(mode, assessmentOnly = false) {
+  return `${assessmentOnly ? 'Reply with only' : 'After the artifact, end your reply with'} the line ${ASSESSMENT_HEADING} followed by one JSON object, replacing each <...> with your own answer. "confidence" is required and must be a number from 0 to 1:
+${replyTemplate(mode)}`;
+}
+
 function formatInstructions({ compact, mode, assessmentOnly = false }) {
   const editing = mode === 'edit';
   if (compact) {
-    // Placeholders instead of sample values: small models copy samples, and a copied placeholder fails safe.
-    const editKeys = editing ? '"change_summary": "<what you changed>", "unresolved": [<problems you could not fix>], ' : '';
     return `${assessmentOnly ? 'Write' : 'After the artifact, write'} the line ${ASSESSMENT_HEADING} and then one JSON object. Replace each <...> with your own answer:
-{"confidence": <your honest rating from 0 to 1 of how well the artifact fits the brief and canon>, "rationale": "<one sentence>", "flags": [<concerns, if any>], "contradictions": [<conflicts with accepted canon, if any>], "complete": <true, or false if you could not finish>, "summary": "<one sentence>", ${editKeys}"proposed_changes": {"lore": {"tech_level": "", "key_factions": [], "timeline_log": []}, "plot": {"act_beats": [], "loose_threads": [], "resolved_threads": [], "twist_map": []}, "characters": [{"name": "", "role": "", "arc_stage": "", "voice_notes": ""}]}}
+${replyTemplate(mode)}
 In proposed_changes, list only canon the artifact newly establishes and leave out empty parts.`;
   }
   const editKeys = editing
@@ -468,7 +479,8 @@ export function buildWorkerPrompt({ project, mode, action, worker, chapter, targ
 
   const notesPart = notesSection(notes, mode === 'revise' ? '## Author\'s requested changes' : undefined);
   if (notesPart) required.push(notesPart);
-  required.push(taskSection(`${taskText}\nReserve room for the assessment. End with the ${ASSESSMENT_HEADING} line and its JSON object, including your honest confidence rating. If you cannot finish the artifact within the reply, stop at a natural break and set "complete" to false rather than omitting the assessment.`));
+  const replyMode = mode === 'edit' || (mode === 'revise' && target?.worker === 'Editor') ? 'edit' : mode;
+  required.push(taskSection(`${taskText}\nReserve room for the assessment. If you cannot finish the artifact within the reply, stop at a natural break and set "complete" to false rather than omitting the assessment.\n${profile.compact ? `End with the ${ASSESSMENT_HEADING} line and its JSON object, including your honest confidence rating.` : replyReminder(replyMode)}`));
   const result = assemble(system, required, optional, profile);
   result.prompt = result.prompt.replaceAll(WORD_ROOM, wordRoom(result.maxTokens).toLocaleString('en-US'));
   return result;
@@ -491,7 +503,7 @@ export function buildAssessmentPrompt({ project, artifact, profile, resources })
   required.push(targetSection(artifact, 'Artifact to assess'));
   const notesPart = notesSection(artifact.notes);
   if (notesPart) required.push(notesPart);
-  required.push(taskSection(`The previous writing response had no usable confidence rating. Assess ${artifact.id} exactly as supplied against the creative brief and accepted canon. Do not rewrite, continue, or repeat the artifact. Do not assume a high rating: report your honest confidence, rationale, concerns, contradictions, whether the whole unit is complete, summary, and proposed canon changes. ${artifact.finishReason === 'length' ? 'The writing response hit its output limit; the artifact must remain incomplete.' : ''} Return only the ${ASSESSMENT_HEADING} line and its JSON object.`));
+  required.push(taskSection(`The previous writing response had no usable confidence rating. Assess ${artifact.id} exactly as supplied against the creative brief and accepted canon. Do not rewrite, continue, or repeat the artifact. Do not assume a high rating: report your honest confidence, rationale, concerns, contradictions, whether the whole unit is complete, summary, and proposed canon changes. ${artifact.finishReason === 'length' ? 'The writing response hit its output limit; the artifact must remain incomplete.' : ''} ${profile.compact ? `Return only the ${ASSESSMENT_HEADING} line and its JSON object.` : `\n${replyReminder(artifact.worker === 'Editor' ? 'edit' : 'new', true)}`}`));
   return assemble(system, required, contextFor(project, profile, artifact), profile);
 }
 

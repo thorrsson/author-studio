@@ -426,6 +426,26 @@ function buildPrompt(builder, args, ctx) {
   }
 }
 
+const CONTEXT_SHRINKS = 2;
+
+// Builds and sends a request. When the server rejects it as too large (its
+// real limit or free memory is below what it advertised), asks the connection
+// for a smaller working window and rebuilds the prompt to fit it.
+async function generateFitted(ctx, build, onText) {
+  let prompt = build(ctx.profile);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return { prompt, response: await callModel(ctx, prompt, onText) };
+    } catch (error) {
+      if (!(error instanceof ProviderError) || error.code !== 'too-large' || attempt >= CONTEXT_SHRINKS || !ctx.limitContext) throw error;
+      const smaller = await ctx.limitContext(prompt.inputTokens + prompt.maxTokens);
+      if (!smaller || smaller.contextWindow >= ctx.profile.contextWindow) throw error;
+      ctx.profile = smaller;
+      prompt = build(ctx.profile);
+    }
+  }
+}
+
 function candidateFrom(response, { id, type, worker, chapter, sourceId, revisionOf, notes, ctx, contextNotes = [] }) {
   const { artifact: content, assessmentText, separatedNotes } = splitResponse(response.text, { separatePlanning: type === 'chapter' });
   if (!content.trim()) {
@@ -467,27 +487,32 @@ function candidateFrom(response, { id, type, worker, chapter, sourceId, revision
   };
 }
 
+const ASSESSMENT_RETRIES = 3;
+
 async function recoverAssessment(project, candidate, ctx) {
   if (candidate.assessed && candidate.confidence !== null) return candidate;
+  const tooLong = 'The missing assessment could not be recovered: the full artifact and story baseline do not fit this model. Choose a larger-context model or review it yourself.';
   let prompt;
-  try {
-    prompt = buildAssessmentPrompt({ project, artifact: candidate, profile: ctx.profile, resources: ctx.resources });
-  } catch (error) {
-    if (!(error instanceof PromptTooLongError)) throw error;
-    return { ...candidate, flags: dedupe([...candidate.flags, 'The missing assessment could not be recovered: the full artifact and story baseline do not fit this model. Choose a larger-context model or review it yourself.']) };
+  let assessment = null;
+  for (let attempt = 0; attempt < ASSESSMENT_RETRIES; attempt += 1) {
+    let response;
+    try {
+      ({ prompt, response } = await generateFitted(ctx, (profile) => buildAssessmentPrompt({ project, artifact: candidate, profile, resources: ctx.resources })));
+    } catch (error) {
+      if (error instanceof PromptTooLongError) return { ...candidate, flags: dedupe([...candidate.flags, tooLong]) };
+      if (!(error instanceof ProviderError)) throw error;
+      return { ...candidate, flags: dedupe([...candidate.flags, `The assessment follow-up failed: ${error.message}`]) };
+    }
+    const split = splitResponse(response.text);
+    const parsed = parseAssessment(split.assessmentText ?? response.text);
+    if (response.finishReason !== 'length' && parsed.ok && parsed.confidence !== null
+      && parsed.complete !== null && parsed.rationale && parsed.summary) {
+      assessment = parsed;
+      break;
+    }
   }
-  let response;
-  try {
-    response = await callModel(ctx, prompt);
-  } catch (error) {
-    if (!(error instanceof ProviderError)) throw error;
-    return { ...candidate, flags: dedupe([...candidate.flags, `The assessment follow-up failed: ${error.message}`]) };
-  }
-  const split = splitResponse(response.text);
-  const assessment = parseAssessment(split.assessmentText ?? response.text);
-  if (response.finishReason === 'length' || !assessment.ok || assessment.confidence === null
-    || assessment.complete === null || !assessment.rationale || !assessment.summary) {
-    return { ...candidate, flags: dedupe([...candidate.flags, 'The model still did not return a complete, usable assessment after one follow-up. Human review is required.']) };
+  if (!assessment) {
+    return { ...candidate, flags: dedupe([...candidate.flags, `The model still did not return a usable confidence rating after ${ASSESSMENT_RETRIES} follow-ups. Human review is required.`]) };
   }
   const { patch, notes } = normalizePatch(assessment.proposedChanges);
   return {
@@ -586,7 +611,7 @@ export async function runStep(project, request, ctx) {
   } else {
     id = nextBaseId(project, type);
   }
-  const prompt = buildPrompt(buildWorkerPrompt, {
+  const { prompt, response } = await generateFitted(ctx, (profile) => buildPrompt(buildWorkerPrompt, {
     project,
     mode: request.action === 'edit' ? 'edit' : 'new',
     action: request.action,
@@ -594,10 +619,9 @@ export async function runStep(project, request, ctx) {
     chapter,
     target,
     notes,
-    profile: ctx.profile,
+    profile,
     resources: ctx.resources,
-  }, ctx);
-  const response = await callModel(ctx, prompt, (text) => ctx.onDelta?.(visibleArtifact(text, { separatePlanning: type === 'chapter', chapter: type === 'chapter' })));
+  }, ctx), (text) => ctx.onDelta?.(visibleArtifact(text, { separatePlanning: type === 'chapter', chapter: type === 'chapter' })));
   const candidate = await recoverAssessment(project, candidateFrom(response, {
     id, type, worker: action.worker, chapter, sourceId: target?.id, notes, ctx, contextNotes: prompt.contextNotes,
   }), ctx);
@@ -684,10 +708,9 @@ export async function modifyPending(project, { notes } = {}, ctx = {}) {
     throw new EngineError('invalid-input', `This candidate came from "${worker}", which the app cannot run. Approve or reject it instead.`);
   }
   const id = nextVersionId(project, current.base);
-  const prompt = buildPrompt(buildWorkerPrompt, {
-    project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile: ctx.profile, resources,
-  }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(visibleArtifact(value, { separatePlanning: current.type === 'chapter', chapter: current.type === 'chapter' })));
+  const { prompt, response } = await generateFitted(ctx, (profile) => buildPrompt(buildWorkerPrompt, {
+    project, mode: 'revise', worker, chapter: current.chapter, target: current, notes: text, profile, resources,
+  }, ctx), (value) => ctx.onDelta?.(visibleArtifact(value, { separatePlanning: current.type === 'chapter', chapter: current.type === 'chapter' })));
   const candidate = await recoverAssessment(project, candidateFrom(response, {
     id,
     type: current.type,
@@ -729,10 +752,9 @@ export function joinContinuation(existing, addition) {
 
 async function continuation(project, current, ctx) {
   current = separateChapterNotes(current);
-  const prompt = buildPrompt(buildWorkerPrompt, {
-    project, mode: 'continue', worker: current.worker, chapter: current.chapter, target: current, profile: ctx.profile, resources: ctx.resources,
-  }, ctx);
-  const response = await callModel(ctx, prompt, (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value, { separatePlanning: current.type === 'chapter', chapter: current.type === 'chapter' }))));
+  const { prompt, response } = await generateFitted(ctx, (profile) => buildPrompt(buildWorkerPrompt, {
+    project, mode: 'continue', worker: current.worker, chapter: current.chapter, target: current, profile, resources: ctx.resources,
+  }, ctx), (value) => ctx.onDelta?.(joinContinuation(current.content, visibleArtifact(value, { separatePlanning: current.type === 'chapter', chapter: current.type === 'chapter' }))));
   const addition = candidateFrom(response, {
     id: current.id, type: current.type, worker: current.worker, chapter: current.chapter, ctx, contextNotes: prompt.contextNotes,
   });

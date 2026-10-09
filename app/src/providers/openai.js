@@ -225,13 +225,16 @@ export function normalizeBaseUrl(input) {
   return url.toString().replace(/\/+$/, '');
 }
 
-async function probe(fetch, url, signal, headers = {}) {
+async function probe(fetch, url, signal, headers = {}, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
   const onAbort = () => controller.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const response = await fetch(url, { headers, signal: controller.signal });
+    const init = body === undefined
+      ? { headers, signal: controller.signal }
+      : { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal };
+    const response = await fetch(url, init);
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -280,4 +283,36 @@ export async function inspectCompatibleServer({ baseUrl, apiKey, fetch, signal }
     }
   }
   throw firstError;
+}
+
+function ollamaContext(show) {
+  const info = show?.model_info;
+  if (!info || typeof info !== 'object') return undefined;
+  const key = Object.keys(info).find((name) => name.endsWith('.context_length'));
+  return key ? positiveInt(info[key]) : undefined;
+}
+
+// Asks a running compatible server how much context the selected model can
+// take right now. Loaded sizes (LM Studio, llama.cpp) win over advertised
+// maximums. Returns undefined when the server does not say.
+export async function detectContextWindow({ baseUrl, apiKey, model, server, fetch, signal }) {
+  const base = normalizeBaseUrl(baseUrl);
+  if (!base || !model) return undefined;
+  const root = base.replace(/\/v1$/, '');
+  const headers = authHeaders(apiKey);
+  const [models, lmstudio, llamacpp, ollama] = await Promise.all([
+    probe(fetch, joinUrl(base, '/models'), signal, headers)
+      .then((result) => result ?? (/\/v1$/.test(base) ? null : probe(fetch, joinUrl(base, '/v1/models'), signal, headers))),
+    server === 'lmstudio' || server === 'generic' || !server ? probe(fetch, joinUrl(root, '/api/v0/models'), signal, headers) : null,
+    server === 'llamacpp' || server === 'generic' || !server ? probe(fetch, joinUrl(root, '/props'), signal, headers) : null,
+    server === 'ollama' ? probe(fetch, joinUrl(root, '/api/show'), signal, headers, { model }) : null,
+  ]);
+  const loaded = positiveInt(lmstudio?.data?.find?.((entry) => entry?.id === model)?.loaded_context_length);
+  if (loaded) return loaded;
+  const nCtx = positiveInt(llamacpp?.default_generation_settings?.n_ctx ?? llamacpp?.n_ctx);
+  if (nCtx) return nCtx;
+  if (server === 'ollama') return ollamaContext(ollama);
+  const items = Array.isArray(models?.data) ? models.data : Array.isArray(models?.models) ? models.models : [];
+  const item = items.find((entry) => String(entry?.id ?? entry?.name ?? '') === model);
+  return positiveInt(item?.max_model_len ?? item?.context_length ?? item?.context_window ?? item?.loaded_context_length);
 }

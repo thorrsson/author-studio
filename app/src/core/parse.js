@@ -124,6 +124,13 @@ function hasConfidenceJson(text) {
   return /\{[\s\S]*"?confidence"?\s*:/i.test(text);
 }
 
+// A trailing JSON block that carries assessment keys is the assessment even when the rating was left out.
+const ASSESSMENT_KEYS = ['rationale', 'flags', 'contradictions', 'complete', 'summary', 'proposed_changes', 'lore', 'plot', 'characters'];
+function looksLikeAssessment(text) {
+  const object = extractJsonObject(text);
+  return Boolean(object) && ASSESSMENT_KEYS.filter((key) => key in object).length >= 2;
+}
+
 function findTrailingJson(text) {
   const trimmed = text.trimEnd();
   if (trimmed.endsWith('```')) {
@@ -131,7 +138,7 @@ function findTrailingJson(text) {
     const open = trimmed.lastIndexOf('```', close - 1);
     if (open !== -1) {
       const inner = trimmed.slice(open + 3, close).replace(/^(?:json)?[ \t]*\n/i, '');
-      if (hasConfidenceJson(inner) && extractJsonObject(inner)) return { index: open, text: inner };
+      if ((hasConfidenceJson(inner) || looksLikeAssessment(inner)) && extractJsonObject(inner)) return { index: open, text: inner };
     }
   }
   if (!trimmed.endsWith('}')) return undefined;
@@ -139,7 +146,7 @@ function findTrailingJson(text) {
     const end = matchingBrace(trimmed, start);
     if (end === trimmed.length - 1) {
       const body = trimmed.slice(start);
-      if (hasConfidenceJson(body) && extractJsonObject(body)) return { index: start, text: body };
+      if ((hasConfidenceJson(body) || looksLikeAssessment(body)) && extractJsonObject(body)) return { index: start, text: body };
     }
   }
   return undefined;
@@ -167,7 +174,8 @@ export function splitResponse(raw, { separatePlanning = true } = {}) {
   }
   const trailing = findTrailingJson(text);
   if (trailing) {
-    return splitArtifact(text.slice(0, trailing.index), trailing.text, false, separatePlanning);
+    const before = text.slice(0, trailing.index).replace(/\n[ \t>#*=_~-]*(?:author[ \t-]*studio[ \t-]*)?assessment[ \t*=_~:-]*\s*$/i, '');
+    return splitArtifact(before, trailing.text, false, separatePlanning);
   }
   const bareMarker = [...text.matchAll(MARKER_LINE)].at(-1);
   if (bareMarker && /author[ \t-]*studio/i.test(bareMarker[0])) {
@@ -199,9 +207,19 @@ export function visibleArtifact(raw, { separatePlanning = false, chapter = false
   return separatePlanning || chapter ? separateChapterPlanningNotes(content).artifact : content;
 }
 
+// Models often write 85, "85%", or "8/10" for a 0-1 rating; read the scale they clearly meant.
 export function toConfidence(value) {
-  const number = typeof value === 'string' && value.trim() !== '' ? Number(value) : value;
-  return typeof number === 'number' && Number.isFinite(number) && number >= 0 && number <= 1 ? number : null;
+  let number = value;
+  if (typeof value === 'string') {
+    const match = /^\s*(\d+(?:\.\d+)?|\.\d+)\s*(%|\/\s*(?:1|10|100)(?![\d.]))?\s*$/.exec(value);
+    if (!match) return null;
+    number = Number(match[1]);
+    if (match[2] === '%') number /= 100;
+    else if (match[2]) number /= Number(match[2].replace(/\D/g, ''));
+  }
+  if (typeof number !== 'number' || !Number.isFinite(number) || number < 0) return null;
+  if (number > 10 && number <= 100 && !(typeof value === 'string' && /[%/]/.test(value))) number /= 100;
+  return number <= 1 ? number : null;
 }
 
 function textList(value) {
@@ -238,11 +256,8 @@ function fieldValue(value) {
 }
 
 function lineConfidence(value) {
-  const match = /(\d+(?:\.\d+)?|\.\d+)[ \t]*(%|\/[ \t]*(?:10|100)\b)?/.exec(value);
-  if (!match) return null;
-  const number = Number(match[1]);
-  if (!match[2]) return toConfidence(number);
-  return toConfidence(match[2] === '%' ? number / 100 : number / Number(match[2].replace(/\D/g, '')));
+  const match = /(\d+(?:\.\d+)?|\.\d+)[ \t]*(%|\/[ \t]*(?:10|100|1)\b)?/.exec(value);
+  return match ? toConfidence(`${match[1]}${(match[2] ?? '').replace(/\s/g, '')}`) : null;
 }
 
 function parseFieldLines(source) {
@@ -251,7 +266,8 @@ function parseFieldLines(source) {
   let listKey = null;
   for (let index = 0; index < lines.length; index += 1) {
     const field = FIELD_LINE.exec(lines[index]);
-    const key = field && FIELD_NAMES.get(field[1].trim().toLowerCase());
+    const name = field?.[1].trim().toLowerCase();
+    const key = field && (/^confidence(?: (?:level|score|rating))?$/.test(name) ? 'confidence' : FIELD_NAMES.get(name));
     if (!key) {
       const item = listKey && LIST_ITEM.exec(lines[index]);
       if (item) fields[listKey].push(fieldValue(item[1]));
@@ -279,6 +295,15 @@ function parseFieldLines(source) {
   };
 }
 
+// Lowercases keys and unwraps one level such as {"assessment": {...}}.
+function normalizeKeys(object) {
+  if (!object) return object;
+  const lower = Object.fromEntries(Object.entries(object).map(([key, value]) => [key.trim().toLowerCase().replace(/[ -]+/g, '_'), value]));
+  if ('confidence' in lower) return lower;
+  const inner = Object.values(lower).find((value) => isPlainObject(value) && Object.keys(value).some((key) => key.toLowerCase() === 'confidence'));
+  return inner ? normalizeKeys(inner) : lower;
+}
+
 export function parseAssessment(assessmentText) {
   const empty = {
     ok: false,
@@ -296,7 +321,7 @@ export function parseAssessment(assessmentText) {
     return { ...empty, error: 'missing' };
   }
   const source = String(assessmentText);
-  const json = extractJsonObject(source);
+  const json = normalizeKeys(extractJsonObject(source));
   const object = json && 'confidence' in json ? json : parseFieldLines(source) ?? json;
   if (!object) return { ...empty, error: 'invalid' };
   return {

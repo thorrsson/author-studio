@@ -27,12 +27,12 @@ import { markdownToText } from '../core/markdown.js';
 import { canExport, exportMarkdown, EXPORT_TARGETS } from '../core/exports.js';
 import { isPlainObject } from '../core/state.js';
 import { ProviderError } from '../providers/errors.js';
-import { inspectCompatibleServer } from '../providers/openai.js';
+import { detectContextWindow, inspectCompatibleServer } from '../providers/openai.js';
 import { CONNECTION_TYPES, connectionLabel, createProvider, defaultModelFor, profileFor } from '../providers/registry.js';
 import { createDocx } from './docx.js';
 import { AppError } from './files.js';
 import { isProjectId } from './project-store.js';
-import { sanitizeConnection } from './settings-store.js';
+import { contextLimitKey, sanitizeConnection } from './settings-store.js';
 
 const MODEL_OPS = new Set(['step', 'modify', 'continuePending', 'continueAccepted', 'secondOpinion']);
 const OPS = new Set([...MODEL_OPS, 'approve', 'reject', 'forceReview', 'addText', 'updateBrief']);
@@ -113,6 +113,10 @@ function send(sender, channel, data) {
   if (sender && !sender.isDestroyed?.()) sender.send(channel, data);
 }
 
+const CONTEXT_CHECK_TTL_MS = 5 * 60_000;
+// After a too-large rejection, the next attempt budgets for this share of the rejected request.
+const CONTEXT_SHRINK = 0.6;
+
 export function createHandlers({ settings, projects, resources, fetch, appleHelperPath, spawn, dialogs, shell, appInfo, onSettingsChanged }) {
   const busy = new Map();
   const pendingImports = new Map();
@@ -144,14 +148,45 @@ export function createHandlers({ settings, projects, resources, fetch, appleHelp
     return createProvider(connection, { apiKey, fetch, appleHelperPath, ...(spawn ? { spawn } : {}) });
   }
 
-  async function modelContext(connection, { signal, onDelta } = {}) {
-    if (!connection) throw new AppError('no-connection', 'Set up an AI model in Settings first.');
-    const provider = providerFor(connection, settings.getKey(connection.id));
+  // What each server reported recently for a model, so every step does not
+  // re-ask. Limits learned from rejections are saved per model and host.
+  const detectedContext = new Map();
+
+  async function workingConnection(connection, apiKey, signal) {
+    if (connection.type === 'apple') return connection;
+    const key = contextLimitKey(connection);
+    let detected;
+    if (connection.type === 'compatible' && key) {
+      const cached = detectedContext.get(key);
+      if (cached && Date.now() - cached.checkedAt <= CONTEXT_CHECK_TTL_MS) detected = cached.value;
+      else {
+        detected = await detectContextWindow({ ...connection, apiKey, fetch, signal }).catch(() => undefined);
+        detectedContext.set(key, { value: detected, checkedAt: Date.now() });
+      }
+    }
+    const configured = Number(connection.contextWindow) > 0 ? Number(connection.contextWindow) : undefined;
+    const limits = [configured ?? detected, detected, settings.contextLimit(connection)].filter((value) => Number(value) > 0);
+    return limits.length ? { ...connection, contextWindow: Math.min(...limits) } : connection;
+  }
+
+  async function learnContextLimit(connection, current, rejectedTokens) {
+    const target = Math.floor(Math.min(rejectedTokens, current.contextWindow) * CONTEXT_SHRINK);
+    const saved = await settings.saveContextLimit(connection, target);
+    if (!saved || saved >= current.contextWindow) return null;
+    return profileFor({ ...current, contextWindow: saved });
+  }
+
+  async function modelContext(saved, { signal, onDelta } = {}) {
+    if (!saved) throw new AppError('no-connection', 'Set up an AI model in Settings first.');
+    const apiKey = settings.getKey(saved.id);
+    const connection = await workingConnection(saved, apiKey, signal);
+    const provider = providerFor(connection, apiKey);
     const appleContext = connection.type === 'apple' ? (await appleStatus()).contextWindow : undefined;
     const temperature = settings.get().temperature;
     return {
       generate: (request) => provider.generate(request),
       profile: profileFor(connection, { appleContext }),
+      ...(connection.type === 'apple' ? {} : { limitContext: (rejectedTokens) => learnContextLimit(saved, connection, rejectedTokens) }),
       label: connectionLabel(connection),
       resources,
       ...(temperature === null ? {} : { temperature }),
