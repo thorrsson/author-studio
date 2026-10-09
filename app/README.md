@@ -304,13 +304,15 @@ PR, waits for them to pass, and enables auto-merge; any required reviews or
 branch protection rules still apply.
 
 After the PR merges, Release Please creates the `desktop-v<version>` tag and a
-draft GitHub release. The tagged desktop release workflow builds, signs, and
-notarizes the Mac image, tests the signed app, builds the Windows and Linux
-installers, then uploads the installers and updater feeds and publishes the
-release. Mac updates use a ZIP containing the signed, stapled app; its SHA-512
-and size are computed after stapling. Mac differential downloads are disabled
-because rebuilding that ZIP invalidates builder's blockmap. Versions with a
-suffix, such as `1.1.0-beta.1`, are published as pre-releases.
+draft GitHub release. The release workflow calls the desktop build directly
+(GitHub does not start tag-push workflows for tags created with its workflow
+token). The build signs and notarizes the Mac image, tests the signed app,
+builds the Windows and Linux installers, then uploads the installers and
+updater feeds and publishes the release. Mac updates use a ZIP containing the
+signed, stapled app; its SHA-512 and size are computed after stapling. Mac
+differential downloads are disabled because rebuilding that ZIP invalidates
+builder's blockmap. Versions with a suffix, such as `1.1.0-beta.1`, are
+published as pre-releases.
 
 Release Please uses Conventional Commits to generate release notes and decide
 whether changes warrant a release (`fix:` for a patch, `feat:` for a minor,
@@ -320,7 +322,7 @@ have landed since the last release, no release PR is created.
 Repository setup: enable **Allow GitHub Actions to create and approve pull
 requests** and **Allow auto-merge**. Configure the `release` environment and
 its signing secrets as described below. Pushing a `desktop-v*` tag manually
-also starts the tagged build:
+also starts the build:
 
 ```sh
 git tag desktop-v1.0.4 && git push origin desktop-v1.0.4

@@ -1,8 +1,6 @@
 name: Desktop release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -31,7 +29,10 @@ jobs:
        startsWith(github.event.pull_request.head.ref, 'release-please--'))
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    outputs:
+      release_tag: ${{ steps.build.outputs.tag }}
     steps:
+      - uses: actions/checkout@v7
       - name: Create or update the desktop release PR
         id: release
         if: github.event_name != 'pull_request_review'
@@ -131,12 +132,20 @@ jobs:
           manifest-file: .release-please-manifest.json
           target-branch: ${{ github.event.repository.default_branch }}
 
-      - name: Start the tagged desktop build
+      - name: Queue the tagged desktop build
+        id: build
         if: >-
           steps.release.outputs['app--release_created'] == 'true' ||
           steps.merged_release.outputs['app--release_created'] == 'true' ||
           steps.reviewed_release.outputs['app--release_created'] == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs['app--tag_name'] || steps.merged_release.outputs['app--tag_name'] || steps.reviewed_release.outputs['app--tag_name'] }}
-        run: gh workflow run desktop-release.yml --ref "$TAG"
+        run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  desktop_build:
+    needs: release
+    if: needs.release.outputs.release_tag != ''
+    uses: ./.github/workflows/desktop-release.yml
+    with:
+      tag: ${{ needs.release.outputs.release_tag }}
+    secrets: inherit

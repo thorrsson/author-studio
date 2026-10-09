@@ -23,6 +23,8 @@ test('release-please tracks the existing desktop version and tag format', () => 
 
 test('one manual desktop release run requests a version, tests, and auto-merges its PR', () => {
   assert.match(releaseWorkflow, /workflow_dispatch:[\s\S]*?version:[\s\S]*?required: true/);
+  assert.doesNotMatch(releaseWorkflow, /^\s+push:/m);
+  assert.match(releaseWorkflow, /- uses: actions\/checkout@v7/);
   assert.match(releaseWorkflow, /uses: googleapis\/release-please-action@v4/);
   assert.match(releaseWorkflow, /release-as: \$\{\{ inputs\.version \}\}/);
   assert.match(releaseWorkflow, /gh workflow run desktop\.yml --ref "\$branch"/);
@@ -35,11 +37,12 @@ test('one manual desktop release run requests a version, tests, and auto-merges 
 
 test('merged release-please releases dispatch the tagged multi-platform build', () => {
   assert.match(releaseWorkflow, /steps\.release\.outputs\['app--release_created'\] == 'true'/);
-  assert.match(releaseWorkflow, /gh workflow run desktop-release\.yml --ref "\$TAG"/);
+  assert.match(releaseWorkflow, /uses: \.\/\.github\/workflows\/desktop-release\.yml/);
+  assert.match(releaseWorkflow, /tag: \$\{\{ needs\.release\.outputs\.release_tag \}\}/);
   assert.match(buildWorkflow, /tags: \['desktop-v\*'\]/);
-  assert.doesNotMatch(buildWorkflow, /^\s+workflow_dispatch:/m);
-  assert.match(buildWorkflow, /Run the desktop release build from a desktop-v\* tag/);
-  assert.match(buildWorkflow, /GITHUB_REF_NAME.*desktop-v\$version/);
+  assert.match(buildWorkflow, /workflow_call:/);
+  assert.match(buildWorkflow, /ref: \$\{\{ inputs\.tag \|\| github\.ref \}\}/);
+  assert.match(buildWorkflow, /RELEASE_TAG.*inputs\.tag \|\| github\.ref_name/);
   assert.match(buildWorkflow, /name: macOS \(signed and notarized\)/);
   assert.match(buildWorkflow, /name: Windows/);
   assert.match(buildWorkflow, /name: Linux/);
