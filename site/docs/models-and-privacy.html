@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Models &amp; privacy — Author Studio</title>
+  <meta name="description" content="Choose Claude, GPT, local or network models, or Apple Intelligence. Understand API costs, context limits, local storage, keys, and backups.">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="header"><div class="container header-inner">
+    <a class="brand" href="../"><img src="../assets/icon.svg" alt="" width="38" height="38">Author Studio</a>
+    <nav class="nav" aria-label="Main navigation"><a href="../#workflow">How it works</a><a href="./">Documentation</a><a href="https://github.com/thorrsson/author-studio">GitHub</a></nav>
+  </div></header>
+  <div class="container docs-layout">
+    <nav class="docs-nav" aria-label="Documentation"><p>The writing desk</p><a href="./">Getting started</a><a href="workflow.html">Writing workflow</a><a href="models-and-privacy.html" aria-current="page">Models &amp; privacy</a></nav>
+    <main id="main" class="article">
+      <p class="eyebrow">Models &amp; privacy</p>
+      <h1>Your words.<br>Your connection.</h1>
+      <p class="lead">The desktop app connects directly to your chosen AI provider or server. There is no Author Studio account, analytics, or tracking.</p>
+      <p>This guide covers desktop connections. The plugin uses your host's models, tools, storage, and privacy policies instead; it has no direct model API integration.</p>
+      <section id="cloud">
+        <h2>Claude and GPT</h2>
+        <p>Create an API key at <a href="https://console.anthropic.com/settings/keys">Anthropic</a> or <a href="https://platform.openai.com/api-keys">OpenAI</a>. Add it to a connection in <strong>Settings</strong>, choose a model, and use <strong>Test connection</strong>.</p>
+        <p>Cloud services bill API usage separately. Check the provider's model pricing and data-handling policy before sending a manuscript. Writing and relevant project context are sent to that provider; optional reviews and confidence-assessment follow-ups use additional tokens.</p>
+      </section>
+      <section id="local">
+        <h2>Local and network models</h2>
+        <p>Use Ollama, LM Studio, llama.cpp, or another server that speaks the OpenAI API. Start the server, select the connection type, check the address, and choose <strong>Find models</strong>. An optional API key supports authenticated servers and hosted OpenAI-compatible services.</p>
+        <p>A server can run on this computer or another trusted computer on your network. For example, an Ollama server may be at <code>192.168.1.20:11434</code>.</p>
+        <ul>
+          <li><strong>Ollama:</strong> to allow network connections, set <code>OLLAMA_HOST=0.0.0.0</code> on the server computer and restart Ollama.</li>
+          <li><strong>LM Studio:</strong> turn on <strong>Serve on Local Network</strong> in the Developer tab.</li>
+          <li><strong>macOS:</strong> allow Author Studio to find devices on your local network when prompted. Change this later under <strong>Privacy &amp; Security → Local Network</strong>.</li>
+        </ul>
+        <div class="callout"><p>Only expose a model server on a trusted network, with appropriate firewall and authentication controls. A network connection sends your writing to that computer. A hosted compatible endpoint is still a cloud service, not a local model.</p></div>
+        <h3>Set a realistic context window</h3>
+        <p>Under <strong>Advanced → Context window</strong>, enter the capacity your server is configured to use. The app also asks the server for its current capacity and uses the smaller value. If a prompt is rejected as too large, it retries with less background material and remembers the smaller size for that model on that server.</p>
+        <p>Small local models tend to write shorter, simpler chapters and need more human review. A larger context window does not by itself guarantee better continuity or prose.</p>
+      </section>
+      <section id="apple">
+        <h2>Apple Intelligence</h2>
+        <p>Requires an Apple silicon Mac, macOS 26 or later, and Apple Intelligence enabled in <strong>System Settings → Apple Intelligence &amp; Siri</strong>. The app reports when requirements are missing.</p>
+        <p>Generation runs on the Mac with no per-request API charge. Apple's small on-device model reads roughly 3,000 words at once, so the app supplies shorter instructions and less story context. It is better suited to notes and short pieces than long, complex chapters. Expect more review.</p>
+        <p><strong>Allow mature themes</strong> is on by default and selects Apple's less restrictive content filter for fictional crime, conflict, and darker material. Disable it in the connection settings to use Apple's standard filter.</p>
+      </section>
+      <section id="data">
+        <h2>Where your data lives</h2>
+        <p>Desktop projects are stored on your computer. Open <strong>Help → Show Projects Folder</strong> to find them.</p>
+        <ul>
+          <li>macOS: <code>~/Library/Application Support/Author Studio</code></li>
+          <li>Windows: <code>%APPDATA%\Author Studio</code></li>
+          <li>Linux: <code>~/.config/Author Studio</code></li>
+        </ul>
+        <p>API keys use the operating system's protected storage: macOS Keychain, Windows data protection, or a Linux keyring. Without GNOME Keyring, KWallet, or an equivalent Linux keyring, keys receive only basic protection; Settings warns you.</p>
+        <p>A saved key is sent only to the service or server it was entered for. Changing a server to a different address requires entering its key again. Writing goes to your selected model connection; local servers and Apple Intelligence keep generation on your own computers.</p>
+        <p>App update checks contact GitHub, not your AI provider, and do not send project text or API keys. This documentation site has no analytics scripts, third-party fonts, or client-side trackers; it is hosted by GitHub Pages, whose own service policies apply.</p>
+      </section>
+      <section id="backups">
+        <h2>Backups, exports, and portability</h2>
+        <p>Use <strong>History → Back up project</strong> to save a complete project copy, and <strong>File → Open Backup or State File</strong> to restore it. Keep backups somewhere you control and protect them like your manuscript.</p>
+        <p>Readable manuscript and planning exports are useful for sharing but do not replace backups. Plugin state files carry the story bible and progress, not the entire manuscript. See <a href="workflow.html#exports">export options</a> for the distinction.</p>
+      </section>
+      <nav class="next" aria-label="Related guides"><a href="workflow.html">&larr; Writing workflow</a><a href="./">Getting started</a></nav>
+    </main>
+  </div>
+  <footer class="footer"><div class="container footer-inner"><p>Author Studio · Open source, under the MIT license.</p><a href="https://github.com/thorrsson/author-studio/issues">Support &amp; feedback</a></div></footer>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting started — Author Studio</title>
+  <meta name="description" content="Install Author Studio on macOS, Windows, or Linux, connect a model, and start your first story. Includes Copilot CLI and Claude Code plugin setup.">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="header"><div class="container header-inner">
+    <a class="brand" href="../"><img src="../assets/icon.svg" alt="" width="38" height="38">Author Studio</a>
+    <nav class="nav" aria-label="Main navigation"><a href="../#workflow">How it works</a><a href="./" aria-current="page">Documentation</a><a href="https://github.com/thorrsson/author-studio">GitHub</a></nav>
+  </div></header>
+  <div class="container docs-layout">
+    <nav class="docs-nav" aria-label="Documentation"><p>The writing desk</p><a href="./" aria-current="page">Getting started</a><a href="workflow.html">Writing workflow</a><a href="models-and-privacy.html">Models &amp; privacy</a></nav>
+    <main id="main" class="article">
+      <p class="eyebrow">Getting started</p>
+      <h1>A home for your next idea.</h1>
+      <p class="lead">Use the desktop app without a terminal, or bring the workflow into your existing AI coding host as a plugin.</p>
+      <section id="desktop">
+        <h2>Install the desktop app</h2>
+        <p>Open <a href="https://github.com/thorrsson/author-studio/releases">GitHub Releases</a> and choose the installer for your computer. Download from a published release rather than a workflow test build.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th scope="col">Platform</th><th scope="col">Download</th><th scope="col">Install</th></tr></thead>
+          <tbody>
+            <tr><td>macOS (Apple silicon or Intel)</td><td><code>Author-Studio-&lt;version&gt;-universal.dmg</code></td><td>Open the disk image and drag Author Studio to Applications.</td></tr>
+            <tr><td>Windows 10 or 11</td><td><code>Author-Studio-Setup-&lt;version&gt;.exe</code></td><td>Run the installer. It installs for your account.</td></tr>
+            <tr><td>Ubuntu or Debian</td><td><code>Author-Studio-&lt;version&gt;-amd64.deb</code></td><td>Open with your software installer.</td></tr>
+            <tr><td>Other Linux</td><td><code>Author-Studio-&lt;version&gt;-x86_64.AppImage</code></td><td>Make the file executable, then open it.</td></tr>
+          </tbody>
+        </table></div>
+        <div class="callout"><p>Mac releases are signed and notarized. Windows installers are not yet signed: SmartScreen may show a warning. Verify that you downloaded the release from this repository before choosing <strong>More info → Run anyway</strong>.</p></div>
+        <h3>Connect a model</h3>
+        <p>On first launch, add a connection for Claude, GPT, a local/network server, or Apple Intelligence. Use <strong>Test connection</strong> before saving. Connections can be changed later in <strong>Settings</strong>.</p>
+        <p>Claude and GPT require your own API key and bill usage separately. Apple Intelligence requires Apple silicon, macOS 26 or later, and Apple Intelligence enabled. See <a href="models-and-privacy.html">Models &amp; privacy</a> for requirements and tradeoffs.</p>
+        <h3>Start a project</h3>
+        <ol>
+          <li>Create a project with a story idea. Include genre, tone, audience, and form if you know them.</li>
+          <li>Develop a creative brief, then choose research, setting, story planning, writing, or revision.</li>
+          <li>When review is required, approve the proposal, request changes, or reject it. Choose the next step when you are ready.</li>
+        </ol>
+        <p>You can plan without drafting. A short story or flash piece can use the same workflow as a novel; agree on its length and treat the first numbered unit as the whole piece.</p>
+      </section>
+      <section id="plugin">
+        <h2>Prefer a plugin?</h2>
+        <p>The plugin uses the model and tools supplied by your host. It does not connect directly to model APIs or require its own API key.</p>
+        <h3>GitHub Copilot CLI</h3>
+        <pre><code>copilot plugin install thorrsson/author-studio</code></pre>
+        <p>Start a new session, confirm discovery with <code>/skills list</code>, then try:</p>
+        <pre><code>/author-studio start A historical mystery in a seaside town
+/author-studio world
+/author-studio plot
+/author-studio draft 1</code></pre>
+        <p>Use the skill name in your host's picker if your version namespaces it differently.</p>
+        <h3>Claude Code</h3>
+        <pre><code>claude plugin marketplace add thorrsson/author-studio
+claude plugin install author-studio@author-studio-marketplace</code></pre>
+        <p>Start a new session and use the plugin-qualified skill name:</p>
+        <pre><code>/author-studio:author-studio start A literary family saga
+/author-studio:author-studio world
+/author-studio:author-studio plot
+/author-studio:author-studio draft 1</code></pre>
+        <p>The repeated name is intentional: Claude Code uses <code>/plugin-name:skill-name</code>.</p>
+        <h3>Local checkout and other hosts</h3>
+        <p>From a stable local checkout, run <code>copilot plugin marketplace add .</code> or <code>claude plugin marketplace add .</code>, then install <code>author-studio@author-studio-marketplace</code>. Copilot CLI 1.0.89 does not accept <code>copilot plugin install .</code>.</p>
+        <p>Other Agent Skill-compatible hosts can load the complete <code>skills/author-studio/</code> directory, including its resources. Installation and invocation depend on the host. A chat app is not automatically plugin-compatible. See the <a href="https://github.com/thorrsson/author-studio#other-skill-compatible-hosts">repository installation guide</a> for details.</p>
+      </section>
+      <section id="save">
+        <h2>Save before you close</h2>
+        <p><strong>Desktop:</strong> projects save on your computer. Use <strong>History → Back up project</strong> for a complete portable copy. Restore with <strong>File → Open Backup or State File</strong>.</p>
+        <p><strong>Plugin:</strong> state lives in the conversation, not in an automatic cross-session store. Ask for a snapshot and accepted artifacts to be exported, or run <code>state</code> and copy the snapshot. In a new session, supply the snapshot and relevant manuscript/lore files and ask to resume.</p>
+        <div class="callout"><p>A state snapshot contains the story bible and progress, <strong>not the full manuscript</strong>. Keep desktop backups or exported manuscript files as well.</p></div>
+      </section>
+      <section id="updates">
+        <h2>Updates and help</h2>
+        <p>Installed Mac, Windows, and Linux AppImage builds check for stable updates. The app asks before downloading and before restarting to install. Find <strong>Check for Updates</strong> in the Author Studio menu on Mac or Help on Windows/Linux. Older versions without the updater, Debian packages, and source builds need a manual download.</p>
+        <p>For troubleshooting or a feature request, <a href="https://github.com/thorrsson/author-studio/issues">open a GitHub issue</a>. Never include API keys or private manuscript text in a public report.</p>
+      </section>
+      <nav class="next" aria-label="Next guide"><a href="workflow.html">Next: Writing workflow &rarr;</a><a href="models-and-privacy.html">Models &amp; privacy</a></nav>
+    </main>
+  </div>
+  <footer class="footer"><div class="container footer-inner"><p>Author Studio · Open source, under the MIT license.</p><a href="https://github.com/thorrsson/author-studio">Source &amp; contributions</a></div></footer>
+</body>
+</html>
