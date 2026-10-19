@@ -304,7 +304,11 @@ and [Agent Skills](https://agentskills.io/specification).
 ## Marketing and documentation site
 
 The GitHub Pages site lives in `site/`. It is plain HTML and CSS with no build
-step, JavaScript, external fonts, or package dependencies. Keep its user guides
+step, external fonts, or package dependencies. A small JavaScript module fetches
+the latest stable GitHub Release when a download picker is opened and links
+directly to the Mac universal DMG, Windows installer, and Linux x86_64 AppImage.
+Both pickers share the lookup; failures are shown with a releases-page fallback.
+Without JavaScript, the releases link remains available. Keep its user guides
 in sync with this README and `app/README.md` when changing user-facing behavior.
 The favicon mirrors `app/src/renderer/icon.svg`.
 

@@ -16,6 +16,8 @@ body { margin: 0; }
 a { color: var(--accent); text-underline-offset: .2em; }
 a:hover { text-decoration-thickness: 2px; }
 a:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 5px; }
+summary:focus-visible { outline: 3px solid #2f6fd6; outline-offset: 5px; }
+[hidden] { display: none !important; }
 h1, h2, h3 { line-height: 1.15; }
 h1, h2, .brand, .manuscript { font-family: Charter, "Iowan Old Style", Palatino, Georgia, serif; }
 h1 { font-size: clamp(2.6rem, 6vw, 5rem); font-weight: 500; letter-spacing: -.045em; margin: .3em 0; }
@@ -42,6 +44,17 @@ img { max-width: 100%; }
 .button:hover { background: #80351d; }
 .button.secondary { color: var(--accent); background: transparent; }
 .button.secondary:hover { background: #f0e5d9; }
+.download-picker { position: relative; }
+.download-picker summary { cursor: pointer; list-style: none; }
+.download-picker summary::-webkit-details-marker { display: none; }
+.download-picker summary::after { content: " \25be"; margin-left: .6rem; }
+.download-picker[open] summary::after { content: " \25b4"; }
+.download-panel { position: absolute; top: calc(100% + .5rem); left: 0; z-index: 2; width: min(310px, calc(100vw - 4rem)); padding: 1rem; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); box-shadow: 0 8px 24px #2b252020; }
+.download-panel ul { margin: 0 0 .75rem; padding: 0; list-style: none; }
+.download-panel li + li { border-top: 1px solid var(--line); }
+.download-panel li a { display: block; padding: .7rem .5rem; border-radius: 4px; text-decoration: none; font-weight: 650; }
+.download-panel li a:hover { background: var(--paper); }
+.download-panel span { display: block; font-size: .8rem; font-weight: 400; color: var(--muted); }
 .small { font-size: .88rem; color: var(--muted); }
 .story-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 2rem; box-shadow: 12px 18px 0 #eae1d5; transform: rotate(1deg); }
 .story-card h2 { font-size: 1.7rem; margin: .7rem 0 1.5rem; }

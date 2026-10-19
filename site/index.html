@@ -10,6 +10,7 @@
   <meta property="og:type" content="website">
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/styles.css">
+  <script type="module" src="assets/download-picker.mjs"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -30,7 +31,18 @@
         <h1 id="hero-title">Your story.<br>Your direction.</h1>
         <p class="lead">Turn a first spark into a world, a plan, and a manuscript. Write alongside AI without handing over the author's chair.</p>
         <div class="actions">
-          <a class="button" href="https://github.com/thorrsson/author-studio/releases">Download the app</a>
+          <details class="download-picker">
+            <summary class="button">Download the app</summary>
+            <div class="download-panel">
+              <p class="small" role="status">Enable JavaScript for direct downloads, or browse all releases below.</p>
+              <ul hidden>
+                <li><a data-platform="mac">Mac <span>Universal .dmg</span></a></li>
+                <li><a data-platform="windows">Windows <span>Installer .exe</span></a></li>
+                <li><a data-platform="linux">Linux <span>x86_64 AppImage</span></a></li>
+              </ul>
+              <a class="small" href="https://github.com/thorrsson/author-studio/releases">All releases &amp; other packages</a>
+            </div>
+          </details>
           <a class="button secondary" href="docs/">Get started</a>
         </div>
         <p class="small">macOS, Windows &amp; Linux · Open source · Bring your own model</p>
@@ -77,7 +89,21 @@
     <section class="closing" aria-labelledby="start-title">
       <h2 id="start-title">Start with a sentence.<br>See where it takes you.</h2>
       <p>The app is free and open source under the MIT license. Cloud AI providers charge separately for usage; local models depend on your hardware.</p>
-      <div class="actions"><a class="button" href="https://github.com/thorrsson/author-studio/releases">Find your download</a><a href="docs/">Read the getting-started guide</a></div>
+      <div class="actions">
+        <details class="download-picker">
+          <summary class="button">Find your download</summary>
+          <div class="download-panel">
+            <p class="small" role="status">Enable JavaScript for direct downloads, or browse all releases below.</p>
+            <ul hidden>
+              <li><a data-platform="mac">Mac <span>Universal .dmg</span></a></li>
+              <li><a data-platform="windows">Windows <span>Installer .exe</span></a></li>
+              <li><a data-platform="linux">Linux <span>x86_64 AppImage</span></a></li>
+            </ul>
+            <a class="small" href="https://github.com/thorrsson/author-studio/releases">All releases &amp; other packages</a>
+          </div>
+        </details>
+        <a href="docs/">Read the getting-started guide</a>
+      </div>
     </section>
   </main>
   <footer class="footer"><div class="container footer-inner"><p>Author Studio · Open source, under the MIT license.</p><nav class="nav" aria-label="Footer"><a href="docs/">Docs</a><a href="https://github.com/thorrsson/author-studio/issues">Support &amp; feedback</a><a href="https://github.com/thorrsson/author-studio">Source</a></nav></div></footer>
