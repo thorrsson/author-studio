@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Writing workflow — Author Studio</title>
+  <meta name="description" content="Learn Author Studio's research, world-building, plotting, drafting, revision, human review, and export workflow.">
+  <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="header"><div class="container header-inner">
+    <a class="brand" href="../"><img src="../assets/icon.svg" alt="" width="38" height="38">Author Studio</a>
+    <nav class="nav" aria-label="Main navigation"><a href="../#workflow">How it works</a><a href="./">Documentation</a><a href="https://github.com/thorrsson/author-studio">GitHub</a></nav>
+  </div></header>
+  <div class="container docs-layout">
+    <nav class="docs-nav" aria-label="Documentation"><p>The writing desk</p><a href="./">Getting started</a><a href="workflow.html" aria-current="page">Writing workflow</a><a href="models-and-privacy.html">Models &amp; privacy</a></nav>
+    <main id="main" class="article">
+      <p class="eyebrow">Writing workflow</p>
+      <h1>Follow the story.<br>Keep the thread.</h1>
+      <p class="lead">Five perspectives, one creative direction: yours. Researcher, World Designer, Story Builder, Scene Writer, and Editor help develop the same project.</p>
+      <p>In the plugin, these are roles in a conversation, not five independently running models. In the desktop app, choose the writing step you need. You do not have to draft a manuscript to use the research and planning tools.</p>
+      <section id="brief">
+        <h2>Begin with a creative brief</h2>
+        <p>Describe your concept, genre or blend, tone, audience, and form. A realistic household is as valid a setting as a fantasy universe. There is no fixed genre list or required three-act structure.</p>
+        <pre><code>/author-studio start A warm contemporary romance about
+rival bakery owners. A novella, grounded, with no supernatural elements.</code></pre>
+        <p>Examples on this page use Copilot CLI. In Claude Code, replace <code>/author-studio</code> with <code>/author-studio:author-studio</code>.</p>
+      </section>
+      <section id="actions">
+        <h2>Choose the next step</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th scope="col">Plugin action</th><th scope="col">Purpose</th></tr></thead>
+          <tbody>
+            <tr><td><code>start &lt;concept&gt;</code></td><td>Initialize the project without starting later phases.</td></tr>
+            <tr><td><code>research [focus]</code></td><td>Gather a research brief. The host must disclose when browsing is unavailable.</td></tr>
+            <tr><td><code>world [focus]</code></td><td>Develop setting, era, social context, and story rules.</td></tr>
+            <tr><td><code>plot [focus]</code></td><td>Develop structure, character arcs, and threads.</td></tr>
+            <tr><td><code>draft &lt;chapter&gt;</code></td><td>Draft one chapter or agreed numbered unit.</td></tr>
+            <tr><td><code>edit [target or notes]</code></td><td>Revise an available artifact for voice, continuity, and pacing.</td></tr>
+            <tr><td><code>review_t2 [target]</code></td><td>Force human review of an available artifact.</td></tr>
+            <tr><td><code>state</code></td><td>Display the complete JSON state snapshot without changing it.</td></tr>
+            <tr><td><code>help</code></td><td>Show actions and review directives.</td></tr>
+          </tbody>
+        </table></div>
+        <p>These are actions after the skill command, not global host commands. Use <code>/author-studio help</code>, not the host's <code>/help</code>.</p>
+        <p>Prose chapters normally run 1,000–3,000 words unless you request a different length. For a standalone short piece, agree on its scope and use <code>draft 1</code> for the whole work. Scenes and serial installments can also be numbered units.</p>
+      </section>
+      <section id="review">
+        <h2>Review before canon changes</h2>
+        <p>Work at or below 75% confidence, an absent or invalid rating, or a reported contradiction requires human review before proposed canon or progress changes are accepted. Unfinished desktop artifacts also wait for review. Work above the threshold can be accepted automatically when the other checks pass.</p>
+        <div class="callout"><p>Confidence is a model's subjective assessment, not a measured probability or a guarantee of quality. Plugin gates are instructions followed by the host model, not a deterministic enforcement engine.</p></div>
+        <p>In the desktop app, use the review controls. In the plugin, reply through the skill with one of these directives:</p>
+        <ul>
+          <li><code>APPROVE</code> accepts only the displayed proposal and stops. A contradiction needs an explicit canon resolution.</li>
+          <li><code>MODIFY: &lt;notes&gt;</code> revises the pending proposal and requests review again.</li>
+          <li><code>REJECT</code> discards the proposal, not accepted work. It does not automatically regenerate.</li>
+        </ul>
+        <p>Other worker commands are blocked while review is pending. Approval does not automatically start the next phase.</p>
+        <p>The desktop app may make up to three assessment-only requests to recover a missing confidence rating. This uses additional tokens, does not rewrite the artifact, and never bypasses an unfinished response or canon conflict. If assessment cannot be recovered, the artifact waits for you.</p>
+        <p>Desktop <strong>YOLO mode</strong> under Write drafts through a selected last chapter, but pauses whenever review is needed. It is an explicit opt-in, not the normal one-step workflow.</p>
+      </section>
+      <section id="two-model-review">
+        <h2>Get a second pair of perspectives</h2>
+        <p>Optional automated review uses two independent read-only reviewers on different models. It consolidates findings, suggested solutions, and disagreements. Reviews are advisory: they never approve work or change canon.</p>
+        <pre><code>/author-studio-review pending
+/author-studio-review chapter-2-v1 focus on clue fairness</code></pre>
+        <p>In Claude Code, use <code>/author-studio:author-studio-review pending</code>. While a human review gate is pending, only that candidate can be reviewed.</p>
+        <p>The plugin requires a host that can run agents and select a model per invocation; otherwise it explains the limitation and asks before offering a single-perspective alternative. Each review uses two additional model calls. In the desktop app, configure reviewer model connections separately.</p>
+      </section>
+      <section id="exports">
+        <h2>Keep manuscript and planning separate</h2>
+        <p>Chapters contain prose, not continuity appendices. Structured timeline events, open threads, and planned beats enter the <strong>Story bible</strong> when accepted. Recognizable list-only planning appendices are separated for review and excluded from manuscript word counts and exports.</p>
+        <p>In the desktop app, export the manuscript as a Word document from <strong>Manuscript</strong>. Use <strong>Export…</strong> or <strong>File → Export Project Content</strong> for research, setting, story plans, a story bible, or a planning packet as Word, Markdown, or plain text. These exports include accepted content, not pending or rejected proposals.</p>
+        <p><strong>History → Back up project</strong> preserves the full desktop project. <strong>History → Export state file for the plugin</strong> transfers the story bible and progress, but not the full manuscript. See <a href="./#save">saving and resuming</a> before switching hosts.</p>
+      </section>
+      <nav class="next" aria-label="Related guides"><a href="./">&larr; Getting started</a><a href="models-and-privacy.html">Next: Models &amp; privacy &rarr;</a></nav>
+    </main>
+  </div>
+  <footer class="footer"><div class="container footer-inner"><p>Author Studio · Open source, under the MIT license.</p><a href="https://github.com/thorrsson/author-studio/issues">Support &amp; feedback</a></div></footer>
+</body>
+</html>

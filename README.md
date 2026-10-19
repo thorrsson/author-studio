@@ -1,5 +1,9 @@
 # Author Studio
 
+[Website](https://thorrsson.github.io/author-studio/) ·
+[Getting started](https://thorrsson.github.io/author-studio/docs/) ·
+[Downloads](https://github.com/thorrsson/author-studio/releases)
+
 An installable, prompt-based fiction-writing plugin for **GitHub Copilot CLI**
 and **Claude Code**, with a portable Agent Skill for other compatible hosts.
 It supports any fiction genre, subgenre, or combination, not just sci-fi/fantasy.
@@ -296,3 +300,32 @@ Format references:
 [Copilot plugins](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/plugins-creating),
 [Claude plugins](https://code.claude.com/docs/en/plugins-reference),
 and [Agent Skills](https://agentskills.io/specification).
+
+## Marketing and documentation site
+
+The GitHub Pages site lives in `site/`. It is plain HTML and CSS with no build
+step, JavaScript, external fonts, or package dependencies. Keep its user guides
+in sync with this README and `app/README.md` when changing user-facing behavior.
+The favicon mirrors `app/src/renderer/icon.svg`.
+
+Preview locally from the repository root:
+
+```sh
+python3 -m http.server 8000 --directory site
+```
+
+Open `http://localhost:8000`. Check page structure, local links, anchors, and
+project-subpath compatibility with:
+
+```sh
+node --test tests/site.test.mjs
+```
+
+To enable hosting, select **Settings → Pages → Build and deployment → Source →
+GitHub Actions** in the repository. After merging to `main`, the
+**Marketing and docs site** workflow validates and deploys `site/` to
+`https://thorrsson.github.io/author-studio/`. Pull requests validate without
+deploying. Use **Actions → Marketing and docs site → Run workflow** on `main`
+to redeploy manually. Deployment uses the `github-pages` environment; configure
+required reviewers there if publication needs approval. No deployment secret is
+needed. All site links are relative so the site also works under a project path.
